@@ -2,7 +2,7 @@
  * API Client cho ERP-FMCG Backend.
  * Dùng chung với dev-mode / Firebase ID token.
  */
-const API_BASE = (import.meta as unknown as { env: { VITE_API_URL?: string } }).env.VITE_API_URL || 'http://localhost:3001/api';
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 
 export async function apiCall(method, path, body, token) {
     const headers = { 'Content-Type': 'application/json' };
