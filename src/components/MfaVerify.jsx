@@ -6,7 +6,7 @@ import { useState } from 'react';
 import OTPInput from './OTPInput';
 import { useAuth } from '../AuthContext';
 
-const API_BASE = 'http://localhost:3001/api';
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 
 export default function MfaVerify({ onBack }) {
     const { jwtToken, user, markMfaVerified } = useAuth();

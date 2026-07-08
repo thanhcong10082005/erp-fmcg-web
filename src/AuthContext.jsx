@@ -27,8 +27,8 @@
 import { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 
 const AuthContext = createContext(null);
-
-const ERP_API = 'http://localhost:3001/api';
+ 
+const ERP_API = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 
 export const ROLES = {
   OWNER:       'OWNER',
