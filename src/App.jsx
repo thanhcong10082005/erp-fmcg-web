@@ -15,7 +15,7 @@ import LogisticsPage from './pages/LogisticsPage';
 import PaymentsPage from './pages/PaymentsPage';
 import MfaSetup from './components/MfaSetup';
 import MfaVerify from './components/MfaVerify';
-import { apiCall } from './api/client.jsx';
+import RegisterPage from './pages/RegisterPage';
 
 class ErrorBoundary extends React.Component {
     constructor(props) {
@@ -62,7 +62,7 @@ class ErrorBoundary extends React.Component {
     }
 }
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+const API_BASE = 'http://localhost:3001/api';
 
 const NAV_ITEMS = [
     { id: 'dashboard', label: 'Dashboard', icon: '📊' },
@@ -98,22 +98,19 @@ const DEV_USERS_BACHHOA = [
     { user_id: 14, label: '👤 ketoan@bachhoa.vn       — ACCOUNTANT (BACH_HOA)',   role: 'ACCOUNTANT' },
 ];
 
-function LoginPage({ onDevMode }) {
-    const { firebaseLogin, error, loading } = useAuth();
+function LoginPage({ onDevMode, onPasswordLogin, onShowRegister, loading, error }) {
+    const { loading: authLoading } = useAuth();
     const [email, setEmail] = useState('');
     const [pw, setPw]     = useState('');
     const [showDev, setShowDev] = useState(false);
     const [devLoading, setDevLoading] = useState(false);
+    const [localLoading, setLocalLoading] = useState(false);
 
-    const handleFirebaseLogin = async (e) => {
+    const handlePasswordLogin = async (e) => {
         e.preventDefault();
-        try {
-            const cred    = await signInWithEmailAndPassword(auth, email, pw);
-            const idToken = await cred.user.getIdToken();
-            await firebaseLogin(idToken, cred.user);
-        } catch (err) {
-            // Error handled by AuthContext
-        }
+        setLocalLoading(true);
+        await onPasswordLogin(email, pw);
+        setLocalLoading(false);
     };
 
     const handleDevSelect = async (userId) => {
@@ -121,6 +118,8 @@ function LoginPage({ onDevMode }) {
         await onDevMode(userId);
         setDevLoading(false);
     };
+
+    const isLoading = localLoading || authLoading || loading;
 
     return (
         <div style={{
@@ -144,20 +143,31 @@ function LoginPage({ onDevMode }) {
                     </div>
                 )}
 
-                {/* Firebase Login */}
-                <form onSubmit={handleFirebaseLogin}>
+                {/* Password Login — Main flow */}
+                <form onSubmit={handlePasswordLogin}>
                     <div className="form-group">
                         <label>Email</label>
-                        <input type="email" value={email} onChange={e => setEmail(e.target.value)} required autoComplete="email" />
+                        <input type="email" value={email} onChange={e => setEmail(e.target.value)} required autoComplete="email" placeholder="nguyenvana@example.com" />
                     </div>
                     <div className="form-group">
                         <label>Mật khẩu</label>
-                        <input type="password" value={pw} onChange={e => setPw(e.target.value)} required autoComplete="current-password" />
+                        <input type="password" value={pw} onChange={e => setPw(e.target.value)} required autoComplete="current-password" placeholder="••••••" />
                     </div>
-                    <button type="submit" className="btn btn-primary btn-full" disabled={loading}>
-                        {loading ? <><span className="spinner"/> Đang đăng nhập...</> : 'Đăng nhập'}
+                    <button type="submit" className="btn btn-primary btn-full" disabled={isLoading}>
+                        {isLoading ? <><span className="spinner"/> Đang đăng nhập...</> : 'Đăng nhập'}
                     </button>
                 </form>
+
+                {/* Register link */}
+                <div style={{ textAlign: 'center', marginTop: 16 }}>
+                    <button
+                        type="button"
+                        onClick={onShowRegister}
+                        style={{ background: 'none', border: 'none', color: '#3B82F6', cursor: 'pointer', fontSize: '.875rem', fontWeight: 600, textDecoration: 'underline' }}
+                    >
+                        Chưa có tài khoản? Đăng ký ngay
+                    </button>
+                </div>
 
                 {/* Dev Mode */}
                 <div style={{ borderTop: '1px solid #E5E7EB', marginTop: 24, paddingTop: 24 }}>
@@ -219,32 +229,35 @@ function LoginPage({ onDevMode }) {
 }
 
 function ErpAppShell() {
-    const { user, jwtToken, userRole, loading, mfaState, devMode, devLogin, logout } = useAuth();
+    const { user, jwtToken, userRole, loading, mfaState, devMode, devLogin, passwordLogin, logout } = useAuth();
     const [section, setSection] = useState('dashboard');
     const [mfaPhase, setMfaPhase] = useState('none');
     const [sidebarOpen, setSidebarOpen] = useState(true);
+    const [showRegister, setShowRegister] = useState(false);
 
     React.useEffect(() => {
         if (!user) { setMfaPhase('none'); return; }
         if (loading) return;
-        // mfa_required from backend is the authoritative source — always trust it.
-        // This ensures MFA is enforced even when userRole hasn't resolved yet.
         if (mfaState?.mfa_required) {
             if (mfaState.setupRequired) { setMfaPhase('setup'); return; }
             if (mfaState.enabled && !mfaState.verified) { setMfaPhase('verify'); return; }
             setMfaPhase('none'); return;
         }
-        // Not a sensitive role → no MFA needed
         setMfaPhase('none');
     }, [user, loading, mfaState, userRole]);
 
-    const handleDevMode = async (userId) => {
-        await devLogin(userId);
+    const handlePasswordLogin = async (email, password) => {
+        await passwordLogin(email, password);
     };
 
     const handleLogout = async () => {
         await logout();
+        setShowRegister(false);
     };
+
+    if (showRegister) {
+        return <RegisterPage onBack={() => setShowRegister(false)} />;
+    }
 
     if (loading) {
         return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
@@ -252,7 +265,15 @@ function ErpAppShell() {
         </div>;
     }
 
-    if (!user) return <LoginPage onDevMode={handleDevMode}/>;
+    if (!user) return (
+        <LoginPage
+            onDevMode={devLogin}
+            onPasswordLogin={handlePasswordLogin}
+            onShowRegister={() => setShowRegister(true)}
+            loading={false}
+            error={null}
+        />
+    );
 
     if (mfaPhase === 'setup') {
         return <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0f2744' }}>

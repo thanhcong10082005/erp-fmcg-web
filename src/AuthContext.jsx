@@ -252,7 +252,45 @@ export function AuthProvider({ children }) {
     }
   }, []); // mount-only: setupUserSession stable qua useCallback, tránh TDZ
 
-  // ── Auto-refresh JWT every 14 minutes ──────────────────────────────────────
+  // ── Password login: email + password (local auth, no Firebase) ──────────────────
+  const passwordLogin = useCallback(async (email, password) => {
+    setLoading(true);
+    setError(null);
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 15000);
+    try {
+      const r = await fetch(`${ERP_API}/auth/login`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ email, password }),
+        signal:  ctrl.signal,
+      });
+      clearTimeout(t);
+      const json = await r.json();
+
+      if (!r.ok) {
+        throw new Error(json.message || json.error || `HTTP ${r.status}`);
+      }
+
+      // Backend returns { success: true, data: { access_token, user } }
+      const { access_token, user: userData } = json.data;
+      try { localStorage.setItem('erp_jwt', access_token); } catch {}
+      setJwtToken(access_token);
+      setUser(userData);
+      setDevMode(false);
+      await setupUserSession(access_token, false);
+      setLoading(false);
+      return { success: true };
+    } catch (err) {
+      clearTimeout(t);
+      const msg = err.name === 'AbortError'
+        ? 'Yêu cầu quá thời gian. Kiểm tra backend có đang chạy không.'
+        : err.message;
+      setError(msg);
+      setLoading(false);
+      return { success: false, error: msg };
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!jwtToken || devMode) return;
     const interval = setInterval(async () => {
@@ -295,7 +333,7 @@ export function AuthProvider({ children }) {
   const value = {
     user, jwtToken, userRole, loading, error,
     mfaState, devMode, isSensitiveRole,
-    devLogin, firebaseLogin, logout,
+    devLogin, firebaseLogin, passwordLogin, logout,
     markMfaVerified, refreshMfaStatus,
   };
 
