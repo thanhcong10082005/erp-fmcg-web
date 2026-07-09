@@ -17,7 +17,7 @@ export default function MfaVerify({ onBack }) {
         setLoading(true);
         setError('');
         try {
-            const r = await fetch(`${API_BASE}/api/mfa/verify-login`, {
+            const r = await fetch(`${API_BASE}/mfa/verify-login`, {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwtToken}` },
                 body:    JSON.stringify({ token: otp }),

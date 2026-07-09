@@ -26,7 +26,7 @@ export default function MfaSetup({ onBack, onCompleted }) {
         setLoading(true);
         setError('');
         try {
-            const r = await fetch(`${API_BASE}/api/mfa/setup`, {
+            const r = await fetch(`${API_BASE}/mfa/setup`, {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwtToken}` },
                 body:    JSON.stringify({}),
@@ -48,7 +48,7 @@ export default function MfaSetup({ onBack, onCompleted }) {
         setLocalLoading(true);
         setError('');
         try {
-            const r = await fetch(`${API_BASE}/api/mfa/verify-setup`, {
+            const r = await fetch(`${API_BASE}/mfa/verify-setup`, {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwtToken}` },
                 body:    JSON.stringify({ token: otp }),
