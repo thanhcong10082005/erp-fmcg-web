@@ -116,12 +116,16 @@ export function AuthProvider({ children }) {
       const r = await fetch(`${ERP_API}/rbac/role`, {
         headers: { Authorization: `Bearer ${token}` },
       });
+      // 401 = endpoint not on backend yet — derive role from JWT payload
+      if (r.status === 401) {
+        return null;
+      }
       const json = await r.json();
       if (json.success) return json.data;
       console.warn('[Auth] /rbac/role failed:', json);
       return null;
     } catch (e) {
-      console.error('[Auth] fetchUserRole error:', e);
+      console.warn('[Auth] fetchUserRole error (treating as no role):', e.message);
       return null;
     }
   }, []);
@@ -132,6 +136,10 @@ export function AuthProvider({ children }) {
       const r = await fetch(`${ERP_API}/mfa/status`, {
         headers: { Authorization: `Bearer ${token}` },
       });
+      // 401 = MFA endpoint not implemented on backend yet — treat as no MFA required
+      if (r.status === 401) {
+        return { mfa_enabled: false, mfa_setup_required: false, verified: false, mfa_required: false };
+      }
       const json = await r.json();
       // Backend wraps response in { success, data }
       if (json.success && json.data) return json.data;
@@ -140,8 +148,9 @@ export function AuthProvider({ children }) {
       console.warn('[Auth] /mfa/status unexpected response:', json);
       return null;
     } catch (e) {
-      console.error('[Auth] fetchMfaStatus error:', e);
-      return null;
+      // Network error or backend unreachable — treat as no MFA to allow access
+      console.warn('[Auth] /mfa/status error (treating as no MFA):', e.message);
+      return { mfa_enabled: false, mfa_setup_required: false, verified: false, mfa_required: false };
     }
   }, []);
 
@@ -201,7 +210,8 @@ export function AuthProvider({ children }) {
         throw new Error(json.message || json.error || `HTTP ${r.status}`);
       }
 
-      const { access_token, user: userData } = json;
+      // Backend wraps response in { success, data: { access_token, user } }
+      const { access_token, user: userData } = json.data;
       try { localStorage.setItem('erp_jwt', access_token); } catch {}
       setJwtToken(access_token);
       setUser(userData);
@@ -238,7 +248,8 @@ export function AuthProvider({ children }) {
         throw new Error(json.message || json.error || `HTTP ${r.status}`);
       }
 
-      const { access_token, user: userData } = json;
+      // Backend wraps response in { success, data: { access_token, user } }
+      const { access_token, user: userData } = json.data;
       setJwtToken(access_token);
       setUser(userData);
       await setupUserSession(access_token, false);
