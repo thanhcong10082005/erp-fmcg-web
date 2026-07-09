@@ -1,6 +1,9 @@
 /**
  * API Client cho ERP-FMCG Backend.
  * Dùng chung với dev-mode / Firebase ID token.
+ *
+ * Auto-unwrap: nếu response có dạng { success, data } thì trả về data.
+ * Giữ backward-compat với các endpoint trả thẳng array/object.
  */
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 
@@ -17,6 +20,11 @@ export async function apiCall(method, path, body, token) {
     if (!res.ok) {
         const msg = data?.message || data?.error || `HTTP ${res.status}`;
         throw new Error(Array.isArray(msg) ? msg.join(', ') : msg);
+    }
+    // Auto-unwrap: backend wraps most responses in { success, data }
+    // eslint-disable-next-line no-prototype-builtins
+    if (data && data.hasOwnProperty('success') && data.hasOwnProperty('data')) {
+        return data.data;
     }
     return data;
 }
