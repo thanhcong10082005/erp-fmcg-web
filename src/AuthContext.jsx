@@ -1,23 +1,25 @@
 /**
  * AuthContext — ERP-FMCG Authentication Flow
  *
+ * Refresh Token Flow:
+ * - Login → receives { access_token, refresh_token }
+ * - Both stored in localStorage
+ * - Silent refresh: every 14 minutes, try to refresh proactively
+ * - On 401: apiClient interceptor calls POST /auth/refresh → updates tokens
+ * - Logout: clears tokens + calls POST /auth/logout
+ *
  * Flow:
  *  ┌─────────────────────────────────────────────────────┐
  *  │ Dev Mode:                                           │
  *  │   Click "Dev Mode" → POST /api/auth/dev-login      │
- *  │   → JWT access_token + user info                   │
+ *  │   → JWT access_token + refresh_token + user        │
  *  │   → Dashboard (no MFA)                             │
  *  ├─────────────────────────────────────────────────────┤
- *  │ Firebase Login:                                     │
- *  │   1. signInWithEmailAndPassword (Firebase Client)  │
- *  │   2. → Firebase ID Token                          │
- *  │   3. POST /api/auth/login with id_token            │
- *  │   4. → JWT access_token + user info               │
- *  │   5. GET /api/rbac/role → role                   │
- *  │   6. GET /api/mfa/status → MFA required?          │
- *  │   7. If sensitive role + no MFA → setup page      │
- *  │   8. If sensitive role + MFA enabled → verify OTP │
- *  │   9. Otherwise → Dashboard                        │
+ *  │ Password Login:                                     │
+ *  │   POST /api/auth/login { email, password }          │
+ *  │   → { access_token, refresh_token, user }          │
+ *  │   → GET /api/mfa/status → MFA?                     │
+ *  │   → MfaSetup / MfaVerify / Dashboard              │
  *  └─────────────────────────────────────────────────────┘
  *
  * All API calls go to ERP backend at localhost:3001.
@@ -25,10 +27,14 @@
  */
 
 import { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
+import { getAccessToken, getRefreshToken, setTokens, clearTokens } from './api/client';
 
 const AuthContext = createContext(null);
- 
+
 const ERP_API = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+
+const ACCESS_TOKEN_KEY = 'erp_access_token';
+const REFRESH_TOKEN_KEY = 'erp_refresh_token';
 
 export const ROLES = {
   OWNER:       'OWNER',
@@ -56,16 +62,16 @@ export function AuthProvider({ children }) {
   const [devMode, setDevMode] = useState(false);
   const processingUid = useRef(null);
 
-  // ── Mount: nếu chưa có phiên thì tắt loading để hiển thị LoginPage ─────────
+  // ── Mount: restore session from localStorage ─────────────────────────────
   useEffect(() => {
     const stored = (() => {
-      try { return localStorage.getItem('erp_jwt'); } catch { return null; }
+      try { return localStorage.getItem(ACCESS_TOKEN_KEY); } catch { return null; }
     })();
     if (!stored) {
       setLoading(false);
       return;
     }
-    // Có token cũ → thử restore session, nếu fail thì clear
+    // Có token cũ → thử restore session
     (async () => {
       try {
         const ctrl = new AbortController();
@@ -77,30 +83,29 @@ export function AuthProvider({ children }) {
         clearTimeout(t);
         if (r.ok) {
           const json = await r.json();
-          // Backend returns { user, permissions } — no wrapper
           if (json.user && json.user.tenant_id) {
             setJwtToken(stored);
-            setUser(json.user); // { sub, username, tenant_id, role_code, role_id, ... }
+            setUser(json.user);
             setDevMode(true);
             await setupUserSession(stored, true);
           } else {
-            localStorage.removeItem('erp_jwt');
+            clearTokens();
           }
         } else {
-          localStorage.removeItem('erp_jwt');
+          clearTokens();
         }
       } catch (e) {
         console.warn('[Auth] restore session failed:', e.message);
-        try { localStorage.removeItem('erp_jwt'); } catch {}
+        try { clearTokens(); } catch {}
       } finally {
         setLoading(false);
       }
     })();
-  }, []); // mount-only: setupUserSession stable qua useCallback, tránh TDZ
+  }, []); // mount-only
 
   // ── Clear auth state on logout ────────────────────────────────────────────
   const clearAuthState = useCallback(() => {
-    try { localStorage.removeItem('erp_jwt'); } catch {}
+    clearTokens();
     setUser(null);
     setJwtToken(null);
     setUserRole(null);
@@ -110,22 +115,32 @@ export function AuthProvider({ children }) {
     processingUid.current = null;
   }, []);
 
+  // ── Logout: call backend + clear local state ──────────────────────────────
+  const logout = useCallback(async () => {
+    const refreshToken = getRefreshToken();
+    try {
+      await fetch(`${ERP_API}/auth/logout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getAccessToken() || ''}` },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+    } catch (err) {
+      console.warn('[Auth] logout API failed (non-fatal):', err);
+    }
+    clearAuthState();
+  }, [clearAuthState]);
+
   // ── Fetch role from JWT-protected endpoint ─────────────────────────────────
   const fetchUserRole = useCallback(async (token) => {
     try {
       const r = await fetch(`${ERP_API}/rbac/role`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      // 401 = endpoint not on backend yet — derive role from JWT payload
-      if (r.status === 401) {
-        return null;
-      }
+      if (r.status === 401) return null;
       const json = await r.json();
       if (json.success) return json.data;
-      console.warn('[Auth] /rbac/role failed:', json);
       return null;
     } catch (e) {
-      console.warn('[Auth] fetchUserRole error (treating as no role):', e.message);
       return null;
     }
   }, []);
@@ -136,20 +151,14 @@ export function AuthProvider({ children }) {
       const r = await fetch(`${ERP_API}/mfa/status`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      // 401 = MFA endpoint not implemented on backend yet — treat as no MFA required
       if (r.status === 401) {
         return { mfa_enabled: false, mfa_setup_required: false, verified: false, mfa_required: false };
       }
       const json = await r.json();
-      // Backend wraps response in { success, data }
       if (json.success && json.data) return json.data;
-      // Fallback: if backend returns raw object (no wrapper), use it directly
       if (json.mfa_required !== undefined || json.mfa_setup_required !== undefined) return json;
-      console.warn('[Auth] /mfa/status unexpected response:', json);
       return null;
     } catch (e) {
-      // Network error or backend unreachable — treat as no MFA to allow access
-      console.warn('[Auth] /mfa/status error (treating as no MFA):', e.message);
       return { mfa_enabled: false, mfa_setup_required: false, verified: false, mfa_required: false };
     }
   }, []);
@@ -164,8 +173,6 @@ export function AuthProvider({ children }) {
 
       const role        = roleData?.role || null;
       const mfaEnabled  = Boolean(mfaData?.mfa_enabled);
-      // If mfaData is null (backend/RTDB unreachable), fall back to role-based decision.
-      // This prevents silent MFA bypass when the backend is partially down.
       const roleSensitive = role ? ['OWNER', 'SALES_ADMIN', 'ADMIN'].includes(role.toUpperCase()) : false;
       const mfaRequired = mfaData ? Boolean(mfaData.mfa_required) : roleSensitive;
       const setupReq    = mfaData ? Boolean(mfaData.mfa_setup_required) : roleSensitive;
@@ -174,14 +181,13 @@ export function AuthProvider({ children }) {
         setMfaState({
           enabled:       mfaEnabled,
           setupRequired: setupReq,
-          verified:      false, // always false on login — user must re-verify OTP on each login
+          verified:      false,
           mfa_required:  mfaRequired,
         });
 
       return { role, mfaRequired, mfaEnabled, setupRequired: setupReq };
     } catch (e) {
       console.error('[Auth] setupUserSession error:', e);
-      // On any error, we cannot determine MFA status — treat as MFA required
       setMfaState(prev => ({ ...prev, verified: false, mfa_required: true }));
       return null;
     }
@@ -210,9 +216,9 @@ export function AuthProvider({ children }) {
         throw new Error(json.message || json.error || `HTTP ${r.status}`);
       }
 
-      // Backend wraps response in { success, data: { access_token, user } }
-      const { access_token, user: userData } = json.data;
-      try { localStorage.setItem('erp_jwt', access_token); } catch {}
+      // Backend returns { success: true, data: { access_token, refresh_token, user } }
+      const { access_token, refresh_token, user: userData } = json.data;
+      setTokens(access_token, refresh_token);
       setJwtToken(access_token);
       setUser(userData);
       setDevMode(true);
@@ -226,9 +232,9 @@ export function AuthProvider({ children }) {
       setLoading(false);
       return { success: false, error: msg };
     }
-  }, []); // mount-only: setupUserSession stable via useCallback, avoids TDZ
+  }, []);
 
-  // ── Firebase login: verify → get JWT from ERP backend ─────────────────────
+  // ── Firebase login ────────────────────────────────────────────────────────
   const firebaseLogin = useCallback(async (idToken, firebaseUser) => {
     if (processingUid.current === firebaseUser.uid) return;
     processingUid.current = firebaseUser.uid;
@@ -236,7 +242,6 @@ export function AuthProvider({ children }) {
     setLoading(true);
     setError(null);
     try {
-      // Exchange Firebase ID token for ERP JWT
       const r = await fetch(`${ERP_API}/auth/login`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -248,10 +253,11 @@ export function AuthProvider({ children }) {
         throw new Error(json.message || json.error || `HTTP ${r.status}`);
       }
 
-      // Backend wraps response in { success, data: { access_token, user } }
-      const { access_token, user: userData } = json.data;
+      const { access_token, refresh_token, user: userData } = json.data;
+      setTokens(access_token, refresh_token);
       setJwtToken(access_token);
       setUser(userData);
+      setDevMode(false);
       await setupUserSession(access_token, false);
       setLoading(false);
       return { success: true };
@@ -261,9 +267,9 @@ export function AuthProvider({ children }) {
       setLoading(false);
       return { success: false, error: err.message };
     }
-  }, []); // mount-only: setupUserSession stable qua useCallback, tránh TDZ
+  }, []);
 
-  // ── Password login: email + password (local auth, no Firebase) ──────────────────
+  // ── Password login ─────────────────────────────────────────────────────────
   const passwordLogin = useCallback(async (email, password) => {
     setLoading(true);
     setError(null);
@@ -283,9 +289,9 @@ export function AuthProvider({ children }) {
         throw new Error(json.message || json.error || `HTTP ${r.status}`);
       }
 
-      // Backend returns { success: true, data: { access_token, user } }
-      const { access_token, user: userData } = json.data;
-      try { localStorage.setItem('erp_jwt', access_token); } catch {}
+      // Backend returns { success: true, data: { access_token, refresh_token, user } }
+      const { access_token, refresh_token, user: userData } = json.data;
+      setTokens(access_token, refresh_token);
       setJwtToken(access_token);
       setUser(userData);
       setDevMode(false);
@@ -301,27 +307,46 @@ export function AuthProvider({ children }) {
       setLoading(false);
       return { success: false, error: msg };
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Silent refresh: proactive refresh every 14 minutes ───────────────────
   useEffect(() => {
-    if (!jwtToken || devMode) return;
+    if (!jwtToken) return;
     const interval = setInterval(async () => {
       try {
-        const r = await fetch(`${ERP_API}/auth/me`, {
-          headers: { Authorization: `Bearer ${jwtToken}` },
+        const refreshToken = getRefreshToken();
+        if (!refreshToken) return;
+        const r = await fetch(`${ERP_API}/auth/refresh`, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ refresh_token: refreshToken }),
         });
-        if (r.status === 401) {
+        if (r.ok) {
+          const json = await r.json();
+          if (json.success && json.data) {
+            const { access_token, refresh_token } = json.data;
+            setTokens(access_token, refresh_token);
+            setJwtToken(access_token);
+            console.log('[Auth] Silent refresh OK');
+          }
+        } else {
+          // Refresh failed (token expired or revoked) → clear session
+          console.warn('[Auth] Silent refresh failed, clearing session');
           clearAuthState();
         }
-      } catch (_) { /* ignore */ }
+      } catch (_) { /* silent ignore */ }
     }, 14 * 60 * 1000);
     return () => clearInterval(interval);
-  }, [jwtToken, devMode, clearAuthState]);
+  }, [jwtToken, clearAuthState]);
 
-  // ── Logout ─────────────────────────────────────────────────────────────────
-  const logout = useCallback(async () => {
-    clearAuthState();
+  // ── Listen for logout event from apiClient interceptor ─────────────────────
+  useEffect(() => {
+    const handler = () => clearAuthState();
+    window.addEventListener('auth:logout', handler);
+    return () => window.removeEventListener('auth:logout', handler);
   }, [clearAuthState]);
 
+  // ── MFA helpers ────────────────────────────────────────────────────────────
   const markMfaVerified = useCallback(() => {
     setMfaState(prev => ({ ...prev, verified: true }));
   }, []);
