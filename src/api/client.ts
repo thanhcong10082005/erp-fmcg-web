@@ -29,14 +29,14 @@ export function setTokens(access_token: string, refresh_token: string) {
     try {
         localStorage.setItem(ACCESS_TOKEN_KEY, access_token);
         localStorage.setItem(REFRESH_TOKEN_KEY, refresh_token);
-    } catch {}
+    } catch (_) { /* ignore */ }
 }
 
 export function clearTokens() {
     try {
         localStorage.removeItem(ACCESS_TOKEN_KEY);
         localStorage.removeItem(REFRESH_TOKEN_KEY);
-    } catch {}
+    } catch (_) { /* ignore */ }
 }
 
 // ── Refresh lock — chỉ 1 request refresh tại 1 thời điểm (tránh race condition) ──
@@ -53,10 +53,10 @@ function onTokenRefreshed(newToken: string) {
 }
 
 // ── Core fetch với interceptor ───────────────────────────────────────────
-export async function apiCall(method, path, body, token?) {
+export async function apiCall(method: string, path: string, body?: unknown, token?: string | null) {
     const accessToken = token || getAccessToken();
 
-    const doRequest = async (authToken?: string) => {
+    const doRequest = async (authToken?: string | null) => {
         const headers: Record<string, string> = { 'Content-Type': 'application/json' };
         if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
         const res = await fetch(`${API_BASE}${path}`, {
@@ -73,8 +73,7 @@ export async function apiCall(method, path, body, token?) {
                     const refreshed = await performTokenRefresh();
                     if (refreshed) {
                         onTokenRefreshed(refreshed);
-                        // Retry request với token mới
-                        const newHeaders = { 'Content-Type': 'application/json' };
+                        const newHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
                         newHeaders['Authorization'] = `Bearer ${refreshed}`;
                         const retry = await fetch(`${API_BASE}${path}`, {
                             method,
@@ -94,10 +93,10 @@ export async function apiCall(method, path, body, token?) {
                 }
             } else {
                 // Đang refresh → đợi token mới rồi retry
-                return new Promise((resolve, reject) => {
-                    subscribeTokenRefresh(async (newToken) => {
+                return new Promise<unknown>((resolve, reject) => {
+                    subscribeTokenRefresh(async (newToken: string) => {
                         try {
-                            const newHeaders = { 'Content-Type': 'application/json' };
+                            const newHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
                             newHeaders['Authorization'] = `Bearer ${newToken}`;
                             const retry = await fetch(`${API_BASE}${path}`, {
                                 method,
@@ -120,11 +119,11 @@ export async function apiCall(method, path, body, token?) {
     return doRequest(accessToken);
 }
 
-async function handleResponse(res: Response) {
-    let data = {};
-    try { data = await res.json(); } catch (e) { /* non-JSON */ }
+async function handleResponse(res: Response): Promise<unknown> {
+    let data: Record<string, unknown> = {};
+    try { data = await res.json() as Record<string, unknown>; } catch (_) { /* non-JSON */ }
     if (!res.ok) {
-        const msg = data?.message || data?.error || `HTTP ${res.status}`;
+        const msg = (data?.message || data?.error || `HTTP ${res.status}`) as string;
         throw new Error(Array.isArray(msg) ? msg.join(', ') : msg);
     }
     // Auto-unwrap: backend wraps most responses in { success, data }
@@ -151,7 +150,7 @@ async function performTokenRefresh(): Promise<string | null> {
             console.warn('[apiCall] Refresh failed:', res.status);
             return null;
         }
-        const json = await res.json();
+        const json = await res.json() as { success: boolean; data?: { access_token: string; refresh_token: string } };
         if (json.success && json.data) {
             const { access_token, refresh_token } = json.data;
             setTokens(access_token, refresh_token);
@@ -164,39 +163,29 @@ async function performTokenRefresh(): Promise<string | null> {
     }
 }
 
-// ── Legacy: apiCall với token truyền trực tiếp (backward compat) ──────────
-// Deprecate dần — ưu tiên dùng getAccessToken()
-// Keep signature: apiCall(method, path, body, token)
-
+// ── Formatting helpers ────────────────────────────────────────────────────
 export const fmt = {
-    vnd: (v) => typeof v === 'number' ? new Intl.NumberFormat('vi-VN').format(v) + ' ₫' : `${v} ₫`,
-    num: (v) => typeof v === 'number' ? new Intl.NumberFormat('vi-VN').format(v) : v,
-    date: (v) => v ? new Date(v).toLocaleString('vi-VN') : '—',
-    dateOnly: (v) => v ? new Date(v).toLocaleDateString('vi-VN') : '—',
+    vnd: (v: unknown) => typeof v === 'number' ? new Intl.NumberFormat('vi-VN').format(v) + ' ₫' : `${v} ₫`,
+    num: (v: unknown) => typeof v === 'number' ? new Intl.NumberFormat('vi-VN').format(v) : v,
+    date: (v: unknown) => v ? new Date(v as string).toLocaleString('vi-VN') : '—',
+    dateOnly: (v: unknown) => v ? new Date(v as string).toLocaleDateString('vi-VN') : '—',
 };
 
-export function StatusBadge({ s, type = 'generic' }) {
-    const colorMap = {
-        // Order status
+export function StatusBadge({ s, type = 'generic' }: { s: string; type?: string }) {
+    const colorMap: Record<string, string> = {
         DRAFT: '#6B7280', CONFIRMED: '#3B82F6', PICKING: '#F59E0B',
         DELIVERING: '#F97316', DELIVERED: '#10B981', INVOICED: '#059669',
         CLOSED: '#374151', CANCELLED: '#DC2626', PENDING: '#6B7280',
         APPROVED: '#3B82F6', RECEIVED: '#10B981',
-        // Payment
         UNPAID: '#DC2626', PAID: '#10B981', OVERDUE: '#B91C1C',
         UNALLOCATED: '#F59E0B', ALLOCATED: '#10B981',
         RECONCILED: '#059669', POSTED: '#3B82F6', IMPORTED: '#6B7280',
         RECONCILING: '#F59E0B', ARCHIVED: '#374151',
-        // Invoice
         ISSUED: '#10B981',
-        // e-invoice
         SENT: '#3B82F6', ACCEPTED: '#10B981', REJECTED: '#DC2626',
         TIMEOUT: '#B91C1C', ERROR: '#DC2626',
-        // Stock
         OK: '#10B981', LOW_STOCK: '#F59E0B', OUT_OF_STOCK: '#DC2626',
-        // Delivery
         ASSIGNED: '#3B82F6', FAILED: '#DC2626', RETURNED: '#F97316',
-        // COD
         MATCHED: '#10B981', MISMATCHED: '#DC2626',
     };
     const color = colorMap[s] || '#6B7280';

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { apiCall, fmt } from '../api/client.jsx';
+import { apiCall, fmt } from '../api/client';
 
 export default function ReportsPage({ token }) {
     const [tab, setTab] = useState('revenue');

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { apiCall, fmt, StatusBadge } from '../api/client.jsx';
+import { apiCall, fmt, StatusBadge } from '../api/client';
 
 const ORDER_STATUSES = ['DRAFT', 'CONFIRMED', 'PENDING', 'DELIVERING', 'DELIVERED', 'INVOICED', 'CLOSED', 'CANCELLED'];
 

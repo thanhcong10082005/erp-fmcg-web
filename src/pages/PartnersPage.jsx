@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { apiCall, fmt, StatusBadge } from '../api/client.jsx';
+import { apiCall, fmt, StatusBadge } from '../api/client';
 
 const PARTNER_TYPES = ['STORE', 'ASO', 'SUPERMARKET', 'CHAIN', 'AGENT', 'INDIVIDUAL', 'CORPORATE'];
 const ROUTE_TYPES = ['SPVB', 'PRESELL', 'AFHH', 'DTS'];

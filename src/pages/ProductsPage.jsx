@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { apiCall, fmt } from '../api/client.jsx';
+import { apiCall, fmt } from '../api/client';
 
 const CATEGORIES = [
     { id: 1, name: 'Nước uống' },

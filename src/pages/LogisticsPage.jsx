@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { apiCall, fmt, StatusBadge } from '../api/client.jsx';
+import { apiCall, fmt, StatusBadge } from '../api/client';
 
 // Màu sắc cho trạng thái
 const STATUS_COLORS = {

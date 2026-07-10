@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { apiCall, fmt } from '../api/client.jsx';
+import { apiCall, fmt } from '../api/client';
 
 const PARTNER_TYPES_STORE_ONLY = ['STORE', 'CHAIN', 'SUPERMARKET', 'AGENT', 'INDIVIDUAL', 'CORPORATE'];
 
