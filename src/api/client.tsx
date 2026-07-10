@@ -88,15 +88,16 @@ export async function apiCall(method: string, path: string, body?: unknown, toke
                         });
                         return handleResponse(retry);
                     }
+                    // Refresh failed — return 401 to caller.
+                    // DO NOT clearTokens/dispatch here — that wipes localStorage
+                    // and breaks the next page reload. AuthContext decides.
                 } catch (err) {
-                    console.warn('[apiCall] Token refresh failed:', err);
-                    clearTokens();
-                    window.dispatchEvent(new CustomEvent('auth:logout'));
-                    throw err;
+                    console.warn('[apiCall] Token refresh error:', err);
                 } finally {
                     isRefreshing = false;
                     refreshSubscribers = [];
                 }
+                return handleResponse(res);
             } else {
                 // Đang refresh → đợi token mới rồi retry
                 return new Promise<unknown>((resolve, reject) => {
@@ -186,6 +187,15 @@ async function performTokenRefresh(): Promise<string | null> {
         console.warn('[apiCall] Refresh error:', err);
         return null;
     }
+}
+
+/**
+ * Manually clear tokens + notify AuthContext to wipe session.
+ * Use ONLY when you're sure the session is unrecoverable.
+ */
+export function forceLogout() {
+    try { clearTokens(); } catch (_) {}
+    window.dispatchEvent(new CustomEvent('auth:logout'));
 }
 
 // ── Formatting helpers ────────────────────────────────────────────────────

@@ -1,19 +1,24 @@
 /**
  * AuthContext — ERP-FMCG Authentication Flow
  *
- * Token Storage:
- * - access_token  → localStorage key 'erp_access_token'  (JWT, 15m TTL)
- * - refresh_token → localStorage key 'erp_refresh_token' (jti, 7d TTL, Redis-backed)
+ * Token Storage (localStorage):
+ *   - erp_access_token  → JWT, 15 min TTL
+ *   - erp_refresh_token → jti, 7 day TTL (Redis-backed)
  *
- * Restore Session Flow (on page load):
- *  1. Read tokens from localStorage
- *  2. /auth/me with existing access token
- *     • 200 → valid token → setup session → done
- *     • 401 → token expired → POST /auth/refresh
- *       • refresh OK → /auth/me with new token → setup session → done
- *       • refresh FAIL → clear tokens → show login
- *     • other HTTP error → keep tokens (lazy refresh via apiCall) → show login
- *  3. Network/CORS error → keep tokens → show login (apiCall will retry)
+ * Mount restore flow (single, atomic decision matrix):
+ *   1. Read both tokens from localStorage
+ *      → no tokens              : show login
+ *   2. /auth/me with access token
+ *      → 200, has tenant_id    : restore session, show dashboard
+ *      → 200, no tenant_id     : forceLogout (corrupt account)
+ *      → 401                    : try refresh
+ *           refresh OK          : setTokens(new), /auth/me again, restore
+ *           refresh FAIL        : forceLogout (token revoked / expired)
+ *      → 5xx / network error   : keepTokensShowLogin (don't wipe storage;
+ *                                apiCall interceptor retries lazily)
+ *
+ * IMPORTANT: apiCall does NOT clear localStorage on refresh failure.
+ * Only AuthContext decides when to wipe — via auth:logout event.
  */
 
 import { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
@@ -35,12 +40,12 @@ export const ROLES = {
 
 export const MFA_REQUIRED_ROLES = [ROLES.OWNER, ROLES.SALES_ADMIN, ROLES.ADMIN];
 
-export function AuthProvider({ children }) {
-  const [user, setUser]           = useState(null);
-  const [jwtToken, setJwtToken]   = useState(null);
-  const [userRole, setUserRole]   = useState(null);
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [user, setUser]           = useState<any>(null);
+  const [jwtToken, setJwtToken]   = useState<string | null>(null);
+  const [userRole, setUserRole]   = useState<string | null>(null);
   const [loading, setLoading]     = useState(true);
-  const [error, setError]         = useState(null);
+  const [error, setError]         = useState<string | null>(null);
 
   const [mfaState, setMfaState] = useState({
     enabled:       false,
@@ -49,104 +54,10 @@ export function AuthProvider({ children }) {
     mfa_required:  false,
   });
 
-  const processingUid = useRef(null);
-
-  // ── Restore session on mount ───────────────────────────────────────────────
-  useEffect(() => {
-    const storedAccess  = (() => { try { return localStorage.getItem(ACCESS_TOKEN_KEY); } catch { return null; } })();
-    const storedRefresh = (() => { try { return localStorage.getItem(REFRESH_TOKEN_KEY); } catch { return null; } })();
-
-    console.log('[Auth] mount — access:', !!storedAccess, '| refresh:', !!storedRefresh);
-
-    if (!storedAccess || !storedRefresh) {
-      console.log('[Auth] mount — no tokens, show login');
-      setLoading(false);
-      return;
-    }
-
-    (async () => {
-      // ── Step A: try /auth/me with existing access token ─────────────────
-      try {
-        const ctrl = new AbortController();
-        const tok  = setTimeout(() => ctrl.abort(), 8000);
-        const r    = await fetch(`${ERP_API}/auth/me`, {
-          headers: { Authorization: `Bearer ${storedAccess}` },
-          signal:  ctrl.signal,
-        });
-        clearTimeout(tok);
-        console.log('[Auth] mount — /auth/me →', r.status);
-
-        if (r.ok) {
-          // Token still valid
-          const json = await r.json();
-          if (!json.user?.tenant_id) {
-            clearTokens();
-            setLoading(false);
-            return;
-          }
-          // Restore user + fetch role/MFA
-          setJwtToken(storedAccess);
-          setUser(json.user);
-          const session = await setupUserSession(storedAccess);
-          setLoading(false);
-          return;
-        }
-
-        if (r.status === 401) {
-          // Token expired — try refresh
-          console.log('[Auth] mount — token expired, attempting refresh...');
-          const refreshed = await tryRefreshToken(storedRefresh);
-          if (!refreshed) {
-            console.warn('[Auth] mount — refresh failed, clearing tokens');
-            clearTokens();
-            setLoading(false);
-            return;
-          }
-
-          // Refresh OK — fetch /auth/me with new token
-          console.log('[Auth] mount — refresh OK, fetching user...');
-          const meResp = await fetch(`${ERP_API}/auth/me`, {
-            headers: { Authorization: `Bearer ${refreshed.access_token}` },
-          });
-          if (!meResp.ok) {
-            clearTokens();
-            setLoading(false);
-            return;
-          }
-          const meJson = await meResp.json();
-          if (!meJson.user?.tenant_id) {
-            clearTokens();
-            setLoading(false);
-            return;
-          }
-
-          // Persist new token pair
-          setTokens(refreshed.access_token, refreshed.refresh_token);
-          setJwtToken(refreshed.access_token);
-          setUser(meJson.user);
-          await setupUserSession(refreshed.access_token);
-          setLoading(false);
-          return;
-        }
-
-        // Non-401 error (500, 503, etc.) — keep tokens, show login.
-        // apiCall interceptor will retry lazily on next request.
-        console.warn('[Auth] mount — /auth/me non-401 HTTP', r.status, '— keeping tokens');
-        setLoading(false);
-        return;
-
-      } catch (e) {
-        // Network/CORS error — keep tokens, show login.
-        // apiCall interceptor will retry on first API call.
-        console.warn('[Auth] mount — network error (tokens kept):', e.message);
-        setLoading(false);
-        return;
-      }
-    })();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const processingUid = useRef<string | null>(null);
 
   // ── Try refresh a given refresh token ─────────────────────────────────────
-  const tryRefreshToken = useCallback(async (refreshToken: string) => {
+  const tryRefreshToken = useCallback(async (refreshToken: string): Promise<{ access_token: string; refresh_token: string } | null> => {
     try {
       const ctrl = new AbortController();
       const tok  = setTimeout(() => ctrl.abort(), 8000);
@@ -165,8 +76,8 @@ export function AuthProvider({ children }) {
         return null;
       }
       console.log('[Auth] tryRefreshToken — SUCCESS');
-      return json.data as { access_token: string; refresh_token: string };
-    } catch (e) {
+      return json.data;
+    } catch (e: any) {
       console.warn('[Auth] tryRefreshToken — error:', e.message);
       return null;
     }
@@ -228,7 +139,7 @@ export function AuthProvider({ children }) {
     }
   }, [fetchUserRole, fetchMfaStatus]);
 
-  // ── Clear auth state ───────────────────────────────────────────────────────
+  // ── Clear auth state — DOES NOT dispatch events, used internally only ──────
   const clearAuthState = useCallback(() => {
     clearTokens();
     setUser(null);
@@ -239,7 +150,115 @@ export function AuthProvider({ children }) {
     processingUid.current = null;
   }, []);
 
-  // ── Logout ─────────────────────────────────────────────────────────────────
+  // ── Wipe everything: tokens + React state. Used by explicit logout only ──
+  const wipeSession = useCallback(() => {
+    console.log('[Auth] wipeSession — clearing tokens + state');
+    clearAuthState();
+  }, [clearAuthState]);
+
+  // ── Restore session on mount (atomic decision matrix) ──────────────────────
+  useEffect(() => {
+    const storedAccess  = (() => { try { return localStorage.getItem(ACCESS_TOKEN_KEY); } catch { return null; } })();
+    const storedRefresh = (() => { try { return localStorage.getItem(REFRESH_TOKEN_KEY); } catch { return null; } })();
+
+    console.log('[Auth] mount — access:', !!storedAccess, '| refresh:', !!storedRefresh);
+
+    // ── 1) No tokens → straight to login ────────────────────────────────
+    if (!storedAccess || !storedRefresh) {
+      console.log('[Auth] mount — no tokens, show login');
+      setLoading(false);
+      return;
+    }
+
+    const restoreSession = async (accessToken: string, userObj: any) => {
+      setJwtToken(accessToken);
+      setUser(userObj);
+      console.log('[Auth] mount — session RESTORED:', userObj?.email);
+      const session = await setupUserSession(accessToken);
+      setLoading(false);
+      if (!session) {
+        console.warn('[Auth] mount — setupUserSession returned null (non-fatal)');
+      }
+    };
+
+    const forceLogout = (reason: string) => {
+      console.warn('[Auth] mount — force logout:', reason);
+      clearTokens();
+      setUser(null);
+      setJwtToken(null);
+      setUserRole(null);
+      setMfaState({ enabled: false, setupRequired: false, verified: false, mfa_required: false });
+      setLoading(false);
+    };
+
+    const keepTokensShowLogin = (reason: string) => {
+      console.warn('[Auth] mount —', reason, '— keeping tokens, showing login');
+      setLoading(false);
+    };
+
+    (async () => {
+      // ── 2) Try /auth/me with existing access token ─────────────────────
+      try {
+        const ctrl = new AbortController();
+        const tok  = setTimeout(() => ctrl.abort(), 8000);
+        const r    = await fetch(`${ERP_API}/auth/me`, {
+          headers: { Authorization: `Bearer ${storedAccess}` },
+          signal:  ctrl.signal,
+        });
+        clearTimeout(tok);
+        console.log('[Auth] mount — /auth/me →', r.status);
+
+        // ── 2a) Token still valid ─────────────────────────────────────────
+        if (r.ok) {
+          const json = await r.json();
+          if (!json.user?.tenant_id) {
+            forceLogout('valid token but no tenant_id');
+            return;
+          }
+          await restoreSession(storedAccess, json.user);
+          return;
+        }
+
+        // ── 2b) Token expired → try refresh ───────────────────────────────
+        if (r.status === 401) {
+          console.log('[Auth] mount — access token expired, attempting refresh...');
+          const refreshed = await tryRefreshToken(storedRefresh);
+          if (!refreshed) {
+            forceLogout('refresh token expired/revoked');
+            return;
+          }
+
+          // Persist new token pair immediately
+          setTokens(refreshed.access_token, refreshed.refresh_token);
+
+          // Fetch /auth/me with new token
+          const meResp = await fetch(`${ERP_API}/auth/me`, {
+            headers: { Authorization: `Bearer ${refreshed.access_token}` },
+          });
+          if (!meResp.ok) {
+            forceLogout('/auth/me failed after refresh: ' + meResp.status);
+            return;
+          }
+          const meJson = await meResp.json();
+          if (!meJson.user?.tenant_id) {
+            forceLogout('valid refresh but no tenant_id');
+            return;
+          }
+          await restoreSession(refreshed.access_token, meJson.user);
+          return;
+        }
+
+        // ── 2c) Server error (5xx) or other 4xx — keep tokens, show login ──
+        keepTokensShowLogin('/auth/me returned HTTP ' + r.status);
+
+      } catch (e: any) {
+        // ── 2d) Network/CORS error — keep tokens, show login ──────────────
+        keepTokensShowLogin('network error: ' + (e?.message || 'unknown'));
+      }
+    })();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Logout: call backend + wipe everything ───────────────────────────────
   const logout = useCallback(async () => {
     const refreshToken = getRefreshToken();
     try {
@@ -251,8 +270,8 @@ export function AuthProvider({ children }) {
     } catch (err) {
       console.warn('[Auth] logout API failed (non-fatal):', err);
     }
-    clearAuthState();
-  }, [clearAuthState]);
+    wipeSession();
+  }, [wipeSession]);
 
   // ── Password login ─────────────────────────────────────────────────────────
   const passwordLogin = useCallback(async (email: string, password: string) => {
@@ -282,12 +301,11 @@ export function AuthProvider({ children }) {
       const session = await setupUserSession(access_token);
       setLoading(false);
       if (!session) {
-        setError('Không thể khởi tạo phiên làm việc.');
-        clearAuthState();
-        return { success: false, error: 'Không thể khởi tạo phiên làm việc.' };
+        // Don't wipe — role/MFA is fetched, just log warning
+        console.warn('[Auth] passwordLogin — setupUserSession returned null');
       }
       return { success: true };
-    } catch (err) {
+    } catch (err: any) {
       clearTimeout(tok);
       const msg = err.name === 'AbortError'
         ? 'Yêu cầu quá thời gian. Kiểm tra backend có đang chạy không.'
@@ -296,7 +314,7 @@ export function AuthProvider({ children }) {
       setLoading(false);
       return { success: false, error: msg };
     }
-  }, [setupUserSession, clearAuthState]);
+  }, [setupUserSession]);
 
   // ── Firebase login ────────────────────────────────────────────────────────
   const firebaseLogin = useCallback(async (idToken: string, firebaseUser: { uid: string }) => {
@@ -322,18 +340,16 @@ export function AuthProvider({ children }) {
       const session = await setupUserSession(access_token);
       setLoading(false);
       if (!session) {
-        setError('Không thể khởi tạo phiên làm việc.');
-        clearAuthState();
-        return { success: false, error: 'Không thể khởi tạo phiên làm việc.' };
+        console.warn('[Auth] firebaseLogin — setupUserSession returned null');
       }
       return { success: true };
-    } catch (err) {
+    } catch (err: any) {
       setError(err.message);
       processingUid.current = null;
       setLoading(false);
       return { success: false, error: err.message };
     }
-  }, [setupUserSession, clearAuthState]);
+  }, [setupUserSession]);
 
   // ── Silent proactive refresh every 14 minutes ──────────────────────────────
   useEffect(() => {
@@ -356,23 +372,25 @@ export function AuthProvider({ children }) {
             console.log('[Auth] Silent refresh OK');
           }
         } else {
-          console.warn('[Auth] Silent refresh failed (' + r.status + '), clearing session');
-          clearAuthState();
+          console.warn('[Auth] Silent refresh failed (' + r.status + ')');
+          // DO NOT wipe tokens here — let apiCall surface 401s naturally.
+          // If user is actively using the app, their next API call will
+          // trigger another refresh attempt.
         }
       } catch (_) { /* network error → silent, next interval will retry */ }
     }, 14 * 60 * 1000);
     return () => clearInterval(id);
-  }, [jwtToken, clearAuthState]);
+  }, [jwtToken]);
 
-  // ── Receive logout events from apiClient interceptor ───────────────────────
+  // ── Receive logout events from explicit logout only ───────────────────────
   useEffect(() => {
     const handler = () => {
-      console.warn('[Auth] Received auth:logout event — clearing session');
-      clearAuthState();
+      console.warn('[Auth] Received auth:logout event — wiping session');
+      wipeSession();
     };
     window.addEventListener('auth:logout', handler);
     return () => window.removeEventListener('auth:logout', handler);
-  }, [clearAuthState]);
+  }, [wipeSession]);
 
   // ── MFA helpers ────────────────────────────────────────────────────────────
   const markMfaVerified = useCallback(() => {
