@@ -25,10 +25,17 @@ export function getRefreshToken(): string | null {
 }
 
 export function setTokens(access_token: string, refresh_token: string) {
+    if (!access_token || !refresh_token) {
+        console.error('[api/client] setTokens — received empty token!');
+        return;
+    }
     try {
         localStorage.setItem(ACCESS_TOKEN_KEY, access_token);
         localStorage.setItem(REFRESH_TOKEN_KEY, refresh_token);
-    } catch (_) { /* ignore */ }
+    } catch (err) {
+        console.error('[api/client] localStorage write failed:', err);
+        throw err; // surface the error instead of swallowing it
+    }
 }
 
 export function clearTokens() {
@@ -152,9 +159,28 @@ async function performTokenRefresh(): Promise<string | null> {
         const json = await res.json() as { success: boolean; data?: { access_token: string; refresh_token: string } };
         if (json.success && json.data) {
             const { access_token, refresh_token } = json.data;
+            // Verify tokens are non-empty strings before storing
+            if (!access_token || !refresh_token) {
+                console.error('[apiCall] Refresh returned empty token(s):', json.data);
+                return null;
+            }
             setTokens(access_token, refresh_token);
+            // Double-check localStorage write succeeded
+            const storedAccess  = localStorage.getItem(ACCESS_TOKEN_KEY);
+            const storedRefresh = localStorage.getItem(REFRESH_TOKEN_KEY);
+            if (storedAccess !== access_token || storedRefresh !== refresh_token) {
+                console.error('[apiCall] localStorage write FAILED!', {
+                    expectedAccess:  access_token,
+                    actualAccess:   storedAccess,
+                    expectedRefresh: refresh_token,
+                    actualRefresh:  storedRefresh,
+                });
+                return null;
+            }
+            console.log('[apiCall] performTokenRefresh — SUCCESS, tokens updated');
             return access_token;
         }
+        console.warn('[apiCall] Refresh bad shape:', json);
         return null;
     } catch (err) {
         console.warn('[apiCall] Refresh error:', err);
