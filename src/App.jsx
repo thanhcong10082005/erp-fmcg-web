@@ -11,7 +11,6 @@ import InvoicesPage from './pages/InvoicesPage';
 import ReportsPage from './pages/ReportsPage';
 import RbacAdminPage from './pages/RbacAdminPage';
 import LogisticsPage from './pages/LogisticsPage';
-// import CodReconciliationPage from './pages/CodReconciliationPage';
 import PaymentsPage from './pages/PaymentsPage';
 import MfaSetup from './components/MfaSetup';
 import MfaVerify from './components/MfaVerify';
@@ -62,11 +61,9 @@ class ErrorBoundary extends React.Component {
     }
 }
 
-const API_BASE = 'http://localhost:3001/api';
-
 const NAV_ITEMS = [
     { id: 'dashboard', label: 'Dashboard', icon: '📊' },
-    { id: 'partners', label: 'Partners', icon: '👥' },  // Đổi từ 'customers'
+    { id: 'partners', label: 'Partners', icon: '👥' },
     { id: 'products', label: 'Sản phẩm', icon: '📦' },
     { id: 'sales', label: 'Đơn bán hàng', icon: '🛒' },
     { id: 'logistics', label: 'Giao hàng', icon: '🚚' },
@@ -77,33 +74,10 @@ const NAV_ITEMS = [
     { id: 'rbac', label: 'RBAC Admin', icon: '🛡️' },
 ];
 
-// PHN users
-const DEV_USERS_PHN = [
-    { user_id: 1,  label: '👤 thanhcongaptx48@gmail.com — OWNER (PHN)',          role: 'OWNER' },
-    { user_id: 2,  label: '👤 admin@phn.vn           — ADMIN (PHN)',            role: 'ADMIN' },
-    { user_id: 3,  label: '👤 salesadmin@phn.vn      — SALES_ADMIN (PHN)',      role: 'SALES_ADMIN' },
-    { user_id: 4,  label: '👤 truongteam1@phn.vn     — SALES_MANAGER (PHN)',   role: 'SALES_MANAGER' },
-    { user_id: 5,  label: '👤 nvkd1@phn.vn           — SALES_REP (PHN)',        role: 'SALES_REP' },
-    { user_id: 6,  label: '👤 dcr001@phn.vn          — DCR (PHN)',              role: 'DCR' },
-    { user_id: 7,  label: '👤 ketoan001@phn.vn       — ACCOUNTANT (PHN)',       role: 'ACCOUNTANT' },
-    { user_id: 8,  label: '👤 qlykho001@phn.vn        — WAREHOUSE_MANAGER (PHN)',role: 'WAREHOUSE_MANAGER' },
-    { user_id: 9,  label: '👤 nvkho001@phn.vn         — WAREHOUSE_STAFF (PHN)',  role: 'WAREHOUSE_STAFF' },
-];
-// BACH_HOA users
-const DEV_USERS_BACHHOA = [
-    { user_id: 10, label: '👤 thanhtx@gmail.com        — OWNER (BACH_HOA)',      role: 'OWNER' },
-    { user_id: 11, label: '👤 admin@bachhoa.vn        — ADMIN (BACH_HOA)',        role: 'ADMIN' },
-    { user_id: 12, label: '👤 salesmgr@bachhoa.vn    — SALES_MANAGER (BH)',      role: 'SALES_MANAGER' },
-    { user_id: 13, label: '👤 dcr@bachhoa.vn          — DCR (BACH_HOA)',         role: 'DCR' },
-    { user_id: 14, label: '👤 ketoan@bachhoa.vn       — ACCOUNTANT (BACH_HOA)',   role: 'ACCOUNTANT' },
-];
-
-function LoginPage({ onDevMode, onPasswordLogin, onShowRegister, loading, error }) {
+function LoginPage({ onPasswordLogin, onShowRegister, loading, error }) {
     const { loading: authLoading } = useAuth();
     const [email, setEmail] = useState('');
     const [pw, setPw]     = useState('');
-    const [showDev, setShowDev] = useState(false);
-    const [devLoading, setDevLoading] = useState(false);
     const [localLoading, setLocalLoading] = useState(false);
 
     const handlePasswordLogin = async (e) => {
@@ -111,12 +85,6 @@ function LoginPage({ onDevMode, onPasswordLogin, onShowRegister, loading, error 
         setLocalLoading(true);
         await onPasswordLogin(email, pw);
         setLocalLoading(false);
-    };
-
-    const handleDevSelect = async (userId) => {
-        setDevLoading(true);
-        await onDevMode(userId);
-        setDevLoading(false);
     };
 
     const isLoading = localLoading || authLoading || loading;
@@ -143,7 +111,6 @@ function LoginPage({ onDevMode, onPasswordLogin, onShowRegister, loading, error 
                     </div>
                 )}
 
-                {/* Password Login — Main flow */}
                 <form onSubmit={handlePasswordLogin}>
                     <div className="form-group">
                         <label>Email</label>
@@ -158,7 +125,6 @@ function LoginPage({ onDevMode, onPasswordLogin, onShowRegister, loading, error 
                     </button>
                 </form>
 
-                {/* Register link */}
                 <div style={{ textAlign: 'center', marginTop: 16 }}>
                     <button
                         type="button"
@@ -168,68 +134,13 @@ function LoginPage({ onDevMode, onPasswordLogin, onShowRegister, loading, error 
                         Chưa có tài khoản? Đăng ký ngay
                     </button>
                 </div>
-
-                {/* Dev Mode */}
-                <div style={{ borderTop: '1px solid #E5E7EB', marginTop: 24, paddingTop: 24 }}>
-                    <button
-                        className="btn btn-outline btn-full"
-                        style={{ marginBottom: showDev ? 12 : 0 }}
-                        onClick={() => setShowDev(v => !v)}
-                    >
-                        🧪 Dev Mode {showDev ? '▲' : '▼'}
-                    </button>
-
-                    {showDev && (
-                        <div style={{ marginTop: 12 }}>
-                            <p style={{ fontSize: '.8rem', color: '#6B7280', marginBottom: 8 }}>
-                                ⚠️ Dev Mode bỏ qua Firebase — chỉ dùng để test. Role <strong>OWNER/ADMIN/SALES_ADMIN</strong> bắt buộc MFA.
-                            </p>
-
-                            {/* PHN */}
-                            <div style={{ marginBottom: 8 }}>
-                                <div style={{ fontSize: '.75rem', fontWeight: 700, color: '#374151', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                                    PHN — NPP Phụng Hoàng Nguyên
-                                </div>
-                                {DEV_USERS_PHN.map(u => (
-                                    <button
-                                        key={u.user_id}
-                                        className="btn btn-outline btn-full"
-                                        style={{ fontSize: '.78rem', textAlign: 'left', marginBottom: 4, padding: '6px 10px' }}
-                                        onClick={() => handleDevSelect(u.user_id)}
-                                        disabled={devLoading}
-                                    >
-                                        {u.label}
-                                    </button>
-                                ))}
-                            </div>
-
-                            {/* BACH_HOA */}
-                            <div>
-                                <div style={{ fontSize: '.75rem', fontWeight: 700, color: '#374151', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                                    BACH_HOA — Bách Hóa
-                                </div>
-                                {DEV_USERS_BACHHOA.map(u => (
-                                    <button
-                                        key={u.user_id}
-                                        className="btn btn-outline btn-full"
-                                        style={{ fontSize: '.78rem', textAlign: 'left', marginBottom: 4, padding: '6px 10px' }}
-                                        onClick={() => handleDevSelect(u.user_id)}
-                                        disabled={devLoading}
-                                    >
-                                        {u.label}
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-                </div>
             </div>
         </div>
     );
 }
 
 function ErpAppShell() {
-    const { user, jwtToken, userRole, loading, mfaState, devMode, devLogin, passwordLogin, logout } = useAuth();
+    const { user, jwtToken, userRole, loading, mfaState, passwordLogin, logout } = useAuth();
     const [section, setSection] = useState('dashboard');
     const [mfaPhase, setMfaPhase] = useState('none');
     const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -267,7 +178,6 @@ function ErpAppShell() {
 
     if (!user) return (
         <LoginPage
-            onDevMode={devLogin}
             onPasswordLogin={handlePasswordLogin}
             onShowRegister={() => setShowRegister(true)}
             loading={false}
@@ -286,24 +196,16 @@ function ErpAppShell() {
         </div>;
     }
 
-    const currentNav = NAV_ITEMS.find(n => n.id === section);
-
     return (
         <div className="app">
             <div className="topbar">
                 <h1>🏢 ERP-FMCG</h1>
                 <div className="flex">
-                    {devMode ? (
-                        <span className="badge" style={{ background: '#78350F' }}>🧪 DEV MODE</span>
-                    ) : (
-                        <>
-                            <span className="badge" style={{ background: 'var(--primary)' }}>{user?.email}</span>
-                            {userRole && (
-                                <span className="badge" style={{ background: mfaState?.mfa_required ? '#DC2626' : 'var(--success)' }}>
-                                    {userRole} {mfaState?.mfa_required && '🔐'}
-                                </span>
-                            )}
-                        </>
+                    <span className="badge" style={{ background: 'var(--primary)' }}>{user?.email}</span>
+                    {userRole && (
+                        <span className="badge" style={{ background: mfaState?.mfa_required ? '#DC2626' : 'var(--success)' }}>
+                            {userRole} {mfaState?.mfa_required && '🔐'}
+                        </span>
                     )}
                     <button className="btn btn-outline btn-sm" onClick={handleLogout}
                         style={{ color: '#fff', borderColor: '#6B7280' }}>Đăng xuất</button>
@@ -340,7 +242,6 @@ function ErpAppShell() {
                     {section === 'warehouse' && <WarehousePage token={jwtToken}/>}
                     {section === 'invoices' && <InvoicesPage token={jwtToken}/>}
                     {section === 'logistics' && <LogisticsPage token={jwtToken}/>}
-                    {/* COD page removed - not needed in v6 */}
                     {section === 'payments' && <PaymentsPage token={jwtToken}/>}
                     {section === 'reports' && <ReportsPage token={jwtToken}/>}
                     {section === 'rbac' && <RbacAdminPage token={jwtToken}/>}

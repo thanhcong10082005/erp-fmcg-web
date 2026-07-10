@@ -10,20 +10,12 @@
  *
  * Flow:
  *  ┌─────────────────────────────────────────────────────┐
- *  │ Dev Mode:                                           │
- *  │   Click "Dev Mode" → POST /api/auth/dev-login      │
- *  │   → JWT access_token + refresh_token + user        │
- *  │   → Dashboard (no MFA)                             │
- *  ├─────────────────────────────────────────────────────┤
  *  │ Password Login:                                     │
  *  │   POST /api/auth/login { email, password }          │
  *  │   → { access_token, refresh_token, user }          │
  *  │   → GET /api/mfa/status → MFA?                     │
  *  │   → MfaSetup / MfaVerify / Dashboard              │
  *  └─────────────────────────────────────────────────────┘
- *
- * All API calls go to ERP backend at localhost:3001.
- * JWT from /api/auth/login is used for ALL subsequent API calls.
  */
 
 import { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
@@ -59,7 +51,6 @@ export function AuthProvider({ children }) {
     mfa_required:  false,
   });
 
-  const [devMode, setDevMode] = useState(false);
   const processingUid = useRef(null);
 
   // ── Mount: restore session from localStorage ─────────────────────────────
@@ -86,17 +77,55 @@ export function AuthProvider({ children }) {
           if (json.user && json.user.tenant_id) {
             setJwtToken(stored);
             setUser(json.user);
-            setDevMode(true);
-            await setupUserSession(stored, true);
+            // Fetch role + MFA state với token đã restore
+            await setupUserSession(stored, false);
           } else {
-            clearTokens();
+            // Token hợp lệ nhưng user không có tenant → không đủ quyền
+            setLoading(false);
+            return;
           }
-        } else {
+        } else if (r.status === 401) {
+          // Token có thể hết hạn → thử refresh trước
+          try {
+            const ctrl2 = new AbortController();
+            const t2 = setTimeout(() => ctrl2.abort(), 8000);
+            const refreshResp = await fetch(`${ERP_API}/auth/refresh`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ refresh_token: getRefreshToken() }),
+              signal: ctrl2.signal,
+            });
+            clearTimeout(t2);
+            if (refreshResp.ok) {
+              const refreshJson = await refreshResp.json();
+              if (refreshJson.success && refreshJson.data) {
+                const { access_token, refresh_token: newRefresh } = refreshJson.data;
+                setTokens(access_token, newRefresh);
+                setJwtToken(access_token);
+                // Fetch user info với token mới
+                const meResp = await fetch(`${ERP_API}/auth/me`, {
+                  headers: { Authorization: `Bearer ${access_token}` },
+                });
+                if (meResp.ok) {
+                  const meJson = await meResp.json();
+                  if (meJson.user && meJson.user.tenant_id) {
+                    setUser(meJson.user);
+                    await setupUserSession(access_token, false);
+                    setLoading(false);
+                    return;
+                  }
+                }
+              }
+            }
+          } catch (_) {
+            // Refresh thất bại → xóa
+          }
           clearTokens();
         }
-      } catch (e) {
-        console.warn('[Auth] restore session failed:', e.message);
-        try { clearTokens(); } catch {}
+        // Các lỗi khác (500, CORS, timeout...) → GIỮ nguyên token,
+        // để apiCall interceptor xử lý refresh hoặc force re-login
+      } catch (_) {
+        // Lỗi mạng/CORS/timeout → KHÔNG xóa token
       } finally {
         setLoading(false);
       }
@@ -111,7 +140,6 @@ export function AuthProvider({ children }) {
     setUserRole(null);
     setMfaState({ enabled: false, setupRequired: false, verified: false, mfa_required: false });
     setError(null);
-    setDevMode(false);
     processingUid.current = null;
   }, []);
 
@@ -193,47 +221,6 @@ export function AuthProvider({ children }) {
     }
   }, [fetchUserRole, fetchMfaStatus]);
 
-  // ── POST /api/auth/dev-login ───────────────────────────────────────────────
-  const devLogin = useCallback(async (userId) => {
-    setLoading(true);
-    setError(null);
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 15000);
-    try {
-      const body = userId
-        ? JSON.stringify({ user_id: userId })
-        : JSON.stringify({ tenant_id: 'PHN' });
-      const r = await fetch(`${ERP_API}/auth/dev-login`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body,
-        signal:  ctrl.signal,
-      });
-      clearTimeout(t);
-      const json = await r.json();
-
-      if (!r.ok) {
-        throw new Error(json.message || json.error || `HTTP ${r.status}`);
-      }
-
-      // Backend returns { success: true, data: { access_token, refresh_token, user } }
-      const { access_token, refresh_token, user: userData } = json.data;
-      setTokens(access_token, refresh_token);
-      setJwtToken(access_token);
-      setUser(userData);
-      setDevMode(true);
-      await setupUserSession(access_token, true);
-      setLoading(false);
-      return { success: true };
-    } catch (err) {
-      clearTimeout(t);
-      const msg = err.name === 'AbortError' ? 'Yêu cầu quá thời gian (timeout). Kiểm tra backend có đang chạy ở port 3001 không.' : err.message;
-      setError(msg);
-      setLoading(false);
-      return { success: false, error: msg };
-    }
-  }, []);
-
   // ── Firebase login ────────────────────────────────────────────────────────
   const firebaseLogin = useCallback(async (idToken, firebaseUser) => {
     if (processingUid.current === firebaseUser.uid) return;
@@ -257,7 +244,6 @@ export function AuthProvider({ children }) {
       setTokens(access_token, refresh_token);
       setJwtToken(access_token);
       setUser(userData);
-      setDevMode(false);
       await setupUserSession(access_token, false);
       setLoading(false);
       return { success: true };
@@ -294,7 +280,6 @@ export function AuthProvider({ children }) {
       setTokens(access_token, refresh_token);
       setJwtToken(access_token);
       setUser(userData);
-      setDevMode(false);
       await setupUserSession(access_token, false);
       setLoading(false);
       return { success: true };
@@ -368,8 +353,8 @@ export function AuthProvider({ children }) {
 
   const value = {
     user, jwtToken, userRole, loading, error,
-    mfaState, devMode, isSensitiveRole,
-    devLogin, firebaseLogin, passwordLogin, logout,
+    mfaState, isSensitiveRole,
+    firebaseLogin, passwordLogin, logout,
     markMfaVerified, refreshMfaStatus,
   };
 

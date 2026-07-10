@@ -1,6 +1,5 @@
 /**
  * API Client cho ERP-FMCG Backend.
- * Dùng chung với dev-mode / Firebase ID token.
  *
  * Auto-unwrap: nếu response có dạng { success, data } thì trả về data.
  * Giữ backward-compat với các endpoint trả thẳng array/object.
