@@ -23,9 +23,17 @@ import React, { useEffect, useRef } from 'react';
 
 const VIETMAP_CSS = 'https://unpkg.com/@vietmap/vietmap-gl-js@6.0.1/dist/vietmap-gl.css';
 const VIETMAP_JS  = 'https://unpkg.com/@vietmap/vietmap-gl-js@6.0.1/dist/vietmap-gl.js';
+
+// Vietmap v6+ style URL MUST use `apikey=` (no dash) — tile URLs in the
+// generated style.json also use `apikey` (no dash). `api-key=` returns CORS error.
+//
+// Env vars (set trên Vercel/Render — KHÔNG hardcode vì repo là public):
+//   VITE_VIETMAP_API_KEY  — API key cho tiles + geocoding (BẮT BUỘC)
+//   VITE_VIETMAP_STYLE    — optional, override style URL mặc định
+const VIETMAP_API_KEY = import.meta.env.VITE_VIETMAP_API_KEY || '';
 const VIETMAP_STYLE_URL =
   import.meta.env.VITE_VIETMAP_STYLE ||
-  `https://maps.vietmap.vn/maps/styles/tm/style.json?api-key=${import.meta.env.VITE_VIETMAP_API_KEY || ''}`;
+  `https://maps.vietmap.vn/maps/styles/tm/style.json?apikey=${VIETMAP_API_KEY}`;
 
 // Vietmap GL JS UMD exposes global `vietmapgl` (NOT `vietmap`).
 const VIETMAP_GLOBAL = 'vietmapgl';
@@ -97,6 +105,16 @@ export default function VietmapMap({
         style:     VIETMAP_STYLE_URL,
         center:    [center.lng, center.lat],
         zoom,
+        // Ensure apikey is present on every tile/glyph request, in case
+        // the style.json returned URLs with an empty `?apikey=` placeholder.
+        transformRequest: (url) => {
+          if (typeof url !== 'string') return { url };
+          if (url.includes('maps.vietmap.vn') && !/[?&]apikey=[^&]+/.test(url)) {
+            const sep = url.includes('?') ? '&' : '?';
+            return { url: `${url}${sep}apikey=${VIETMAP_API_KEY}` };
+          }
+          return { url };
+        },
       });
 
       map.addControl(new vietmap.NavigationControl(), 'top-right');
