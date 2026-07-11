@@ -21,33 +21,42 @@
 
 import React, { useEffect, useRef } from 'react';
 
+// ═══ SDK ═════════════════════════════════════════════════════════════════
+// Vietmap GL JS hoàn toàn tương thích với MapLibre GL (Vietmap = fork).
+// Có thể dùng style từ bất kỳ provider nào (OpenMapTiles, Stadia, OpenFreeMap).
 const VIETMAP_CSS = 'https://unpkg.com/@vietmap/vietmap-gl-js@6.0.1/dist/vietmap-gl.css';
 const VIETMAP_JS  = 'https://unpkg.com/@vietmap/vietmap-gl-js@6.0.1/dist/vietmap-gl.js';
+const VIETMAP_GLOBAL = 'vietmapgl';
 
-// Backend API URL — `VITE_API_URL` có thể có hoặc không có `/api` ở cuối tuỳ theo
-// environment. Chuẩn hoá: luôn lấy phần gốc (không `/api`).
+// ═══ Style options ══════════════════════════════════════════════════════
+// Quyết định provider dựa trên env:
 //
-// Ví dụ:
-//   VITE_API_URL=https://erp-fmcg-backend.onrender.com/api
-//     → API_ORIGIN  = https://erp-fmcg-backend.onrender.com
-//   VITE_API_URL=https://erp-fmcg-backend.onrender.com
-//     → API_ORIGIN  = https://erp-fmcg-backend.onrender.com
+// 1) VITE_MAP_STYLE_URL — nếu set, dùng literal (vd: cloudfront hosted)
+// 2) Else dùng OpenFreeMap (default — miễn phí, không cần API key, OK từ
+//    mọi IP kể cả Render). Vietnam cities hiển thị name:en + name:vi.
+//
+// 3) Vietmap proxy fallback nếu VITE_USE_VIETMAP_TILES=true
+//    (đã setup ở backend, bị 404 do Render IP bị Vietmap chặn — KHÔNG kích hoạt
+//    trừ khi đã verify proxy works).
+//
+// VITE_VIETMAP_API_KEY — chỉ dùng cho geocoding API (chuyển địa chỉ text → lat/lng)
+//                          qua backend /api/vietmap/search.
 const RAW_API_BASE = import.meta.env.VITE_API_URL || '';
 const API_ORIGIN = RAW_API_BASE.replace(/\/+$/, '').replace(/\/api$/, '');
-// Endpoint proxy: `<origin>/api/vietmap/...` — backend NestJS có globalPrefix='api'
-// controller @Controller('vietmap'), catch-all @Get('*').
 const VIETMAP_PROXY_BASE = `${API_ORIGIN}/api/vietmap`;
-
-// Env vars:
-//   VITE_API_URL          — backend URL (bắt buộc, có/không có /api)
-//   VITE_VIETMAP_API_KEY  — API key (fallback nếu proxy không khả dụng)
 const VIETMAP_API_KEY = import.meta.env.VITE_VIETMAP_API_KEY || '';
-const VIETMAP_STYLE_URL =
-  import.meta.env.VITE_VIETMAP_STYLE ||
-  `${VIETMAP_PROXY_BASE}/maps/styles/tm/style.json?apikey=${VIETMAP_API_KEY}`;
+const USE_VIETMAP = import.meta.env.VITE_USE_VIETMAP_TILES === 'true';
 
-// Vietmap GL JS UMD exposes global `vietmapgl` (NOT `vietmap`).
-const VIETMAP_GLOBAL = 'vietmapgl';
+// OpenFreeMap: free, no API key, hỗ trợ name:latin + name:nonlatin (Tiếng Việt có dấu).
+const OPENFREEMAP_LIBERTY = 'https://tiles.openfreemap.org/styles/liberty';
+const OPENFREEMAP_POSITRON = 'https://tiles.openfreemap.org/styles/positron';
+const OPENFREEMAP_BRIGHT  = 'https://tiles.openfreemap.org/styles/bright';
+
+const VIETMAP_STYLE_URL =
+  import.meta.env.VITE_MAP_STYLE_URL ||
+  (USE_VIETMAP
+    ? `${VIETMAP_PROXY_BASE}/maps/styles/tm/style.json?apikey=${VIETMAP_API_KEY}`
+    : OPENFREEMAP_LIBERTY);
 
 let vietmapLoading = null;
 
@@ -122,12 +131,17 @@ export default function VietmapMap({
         transformRequest: (url, resourceType) => {
           if (typeof url !== 'string') return { url };
 
-          // Đã đi qua proxy → pass-through
+          // Đã đi qua proxy hoặc là external allowed → pass-through
           if (url.startsWith(VIETMAP_PROXY_BASE)) {
             return { url };
           }
 
-          // Bỏ qua tile request mà URL không phải Vietmap (vd: openmaptiles khác)
+          // Nếu không dùng Vietmap tiles, để OpenFreeMap tự quản lý CORS
+          if (!USE_VIETMAP) {
+            return { url };
+          }
+
+          // Bỏ qua tile request mà URL không phải Vietmap
           if (!url.includes('maps.vietmap.vn')) {
             return { url };
           }
