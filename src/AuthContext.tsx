@@ -211,11 +211,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // ── 2a) Token still valid ─────────────────────────────────────────
         if (r.ok) {
           const json = await r.json();
-          if (!json.user?.tenant_id) {
+          const userData = json.data?.user || json.data; 
+          
+          if (!userData?.tenant_id) {
             forceLogout('valid token but no tenant_id');
             return;
           }
-          await restoreSession(storedAccess, json.user);
+          await restoreSession(storedAccess, userData);
           return;
         }
 
@@ -240,11 +242,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             return;
           }
           const meJson = await meResp.json();
-          if (!meJson.user?.tenant_id) {
+          const refreshedUserData = meJson.data?.user || meJson.data;
+
+          if (!refreshedUserData?.tenant_id) {
             forceLogout('valid refresh but no tenant_id');
             return;
           }
-          await restoreSession(refreshed.access_token, meJson.user);
+          await restoreSession(refreshed.access_token, refreshedUserData);
           return;
         }
 
