@@ -24,22 +24,27 @@ import React, { useEffect, useRef } from 'react';
 const VIETMAP_CSS = 'https://unpkg.com/@vietmap/vietmap-gl-js@6.0.1/dist/vietmap-gl.css';
 const VIETMAP_JS  = 'https://unpkg.com/@vietmap/vietmap-gl-js@6.0.1/dist/vietmap-gl.js';
 
-// Backend API URL — dùng cho proxy tiles (giải quyết CORS issue từ vercel.app → maps.vietmap.vn)
-const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
-
-// Proxy URL: mọi request tiles/sprites/glyphs đều đi qua backend, không bị CORS.
-//   Frontend : https://erp-fmcg-backend.onrender.com/api/vietmap/maps/tiles/.../...?apikey=...
-//   Backend  → forward sang maps.vietmap.vn
+// Backend API URL — `VITE_API_URL` có thể có hoặc không có `/api` ở cuối tuỳ theo
+// environment. Chuẩn hoá: luôn lấy phần gốc (không `/api`).
 //
+// Ví dụ:
+//   VITE_API_URL=https://erp-fmcg-backend.onrender.com/api
+//     → API_ORIGIN  = https://erp-fmcg-backend.onrender.com
+//   VITE_API_URL=https://erp-fmcg-backend.onrender.com
+//     → API_ORIGIN  = https://erp-fmcg-backend.onrender.com
+const RAW_API_BASE = import.meta.env.VITE_API_URL || '';
+const API_ORIGIN = RAW_API_BASE.replace(/\/+$/, '').replace(/\/api$/, '');
+// Endpoint proxy: `<origin>/api/vietmap/...` — backend NestJS có globalPrefix='api'
+// controller @Controller('vietmap'), catch-all @Get('*').
+const VIETMAP_PROXY_BASE = `${API_ORIGIN}/api/vietmap`;
+
 // Env vars:
-//   VITE_API_URL — backend URL (bắt buộc, vd: https://erp-fmcg-backend.onrender.com)
-//   VITE_VIETMAP_API_KEY — chỉ dùng khi proxy không khả dụng (fallback)
+//   VITE_API_URL          — backend URL (bắt buộc, có/không có /api)
+//   VITE_VIETMAP_API_KEY  — API key (fallback nếu proxy không khả dụng)
 const VIETMAP_API_KEY = import.meta.env.VITE_VIETMAP_API_KEY || '';
 const VIETMAP_STYLE_URL =
   import.meta.env.VITE_VIETMAP_STYLE ||
-  (API_BASE
-    ? `${API_BASE}/api/vietmap/maps/styles/tm/style.json?apikey=${VIETMAP_API_KEY}`
-    : `https://maps.vietmap.vn/maps/styles/tm/style.json?apikey=${VIETMAP_API_KEY}`);
+  `${VIETMAP_PROXY_BASE}/maps/styles/tm/style.json?apikey=${VIETMAP_API_KEY}`;
 
 // Vietmap GL JS UMD exposes global `vietmapgl` (NOT `vietmap`).
 const VIETMAP_GLOBAL = 'vietmapgl';
@@ -118,7 +123,7 @@ export default function VietmapMap({
           if (typeof url !== 'string') return { url };
 
           // Đã đi qua proxy → pass-through
-          if (url.startsWith(API_BASE)) {
+          if (url.startsWith(VIETMAP_PROXY_BASE)) {
             return { url };
           }
 
@@ -134,9 +139,10 @@ export default function VietmapMap({
           }
 
           // Đổi origin sang backend proxy
+          //   https://maps.vietmap.vn/maps/tiles/...  →  ${VIETMAP_PROXY_BASE}/maps/tiles/...
           const proxied = u.replace(
             'https://maps.vietmap.vn',
-            `${API_BASE}/api/vietmap`,
+            VIETMAP_PROXY_BASE,
           );
           return { url: proxied, credentials: 'omit' };
         },
