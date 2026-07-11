@@ -2,8 +2,10 @@
 
 interface ImportMetaEnv {
     readonly VITE_API_URL: string
-  }
-  
-  interface ImportMeta {
+    readonly VITE_VIETMAP_API_KEY?: string
+    readonly VITE_VIETMAP_STYLE?: string
+}
+
+interface ImportMeta {
     readonly env: ImportMetaEnv
-  }
+}

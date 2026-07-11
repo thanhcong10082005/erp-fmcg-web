@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiCall, fmt, StatusBadge } from '../api/client';
+import CustomerMapView from './CustomerMapView';
 
 const PARTNER_TYPES = ['STORE', 'ASO', 'SUPERMARKET', 'CHAIN', 'AGENT', 'INDIVIDUAL', 'CORPORATE'];
 const ROUTE_TYPES = ['SPVB', 'PRESELL', 'AFHH', 'DTS'];
@@ -157,13 +158,19 @@ export default function PartnersPage({ token }) {
         <div>
             {/* Tab Navigation */}
             <div style={{ display: 'flex', gap: 8, marginBottom: 16, borderBottom: '1px solid #E5E7EB', paddingBottom: 8 }}>
-                <button 
+                <button
                     className={`btn ${activeTab === 'list' ? 'btn-primary' : 'btn-outline'} btn-sm`}
                     onClick={() => setActiveTab('list')}
                 >
                     📋 Danh sách Partners
                 </button>
-                <button 
+                <button
+                    className={`btn ${activeTab === 'map' ? 'btn-primary' : 'btn-outline'} btn-sm`}
+                    onClick={() => setActiveTab('map')}
+                >
+                    🗺️ Bản đồ
+                </button>
+                <button
                     className={`btn ${activeTab === 'form' ? 'btn-primary' : 'btn-outline'} btn-sm`}
                     onClick={() => { resetForm(); setEditing(null); setShowForm(true); setActiveTab('form'); }}
                 >
@@ -318,6 +325,11 @@ export default function PartnersPage({ token }) {
                         </div>
                     )}
                 </div>
+            )}
+
+            {/* Map View */}
+            {activeTab === 'map' && (
+                <CustomerMapView token={token} onClose={() => setActiveTab('list')} />
             )}
 
             {/* Form View */}
