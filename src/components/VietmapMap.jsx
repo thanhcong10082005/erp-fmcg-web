@@ -24,16 +24,22 @@ import React, { useEffect, useRef } from 'react';
 const VIETMAP_CSS = 'https://unpkg.com/@vietmap/vietmap-gl-js@6.0.1/dist/vietmap-gl.css';
 const VIETMAP_JS  = 'https://unpkg.com/@vietmap/vietmap-gl-js@6.0.1/dist/vietmap-gl.js';
 
-// Vietmap v6+ style URL MUST use `apikey=` (no dash) — tile URLs in the
-// generated style.json also use `apikey` (no dash). `api-key=` returns CORS error.
+// Backend API URL — dùng cho proxy tiles (giải quyết CORS issue từ vercel.app → maps.vietmap.vn)
+const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+
+// Proxy URL: mọi request tiles/sprites/glyphs đều đi qua backend, không bị CORS.
+//   Frontend : https://erp-fmcg-backend.onrender.com/api/vietmap/maps/tiles/.../...?apikey=...
+//   Backend  → forward sang maps.vietmap.vn
 //
-// Env vars (set trên Vercel/Render — KHÔNG hardcode vì repo là public):
-//   VITE_VIETMAP_API_KEY  — API key cho tiles + geocoding (BẮT BUỘC)
-//   VITE_VIETMAP_STYLE    — optional, override style URL mặc định
+// Env vars:
+//   VITE_API_URL — backend URL (bắt buộc, vd: https://erp-fmcg-backend.onrender.com)
+//   VITE_VIETMAP_API_KEY — chỉ dùng khi proxy không khả dụng (fallback)
 const VIETMAP_API_KEY = import.meta.env.VITE_VIETMAP_API_KEY || '';
 const VIETMAP_STYLE_URL =
   import.meta.env.VITE_VIETMAP_STYLE ||
-  `https://maps.vietmap.vn/maps/styles/tm/style.json?apikey=${VIETMAP_API_KEY}`;
+  (API_BASE
+    ? `${API_BASE}/api/vietmap/maps/styles/tm/style.json?apikey=${VIETMAP_API_KEY}`
+    : `https://maps.vietmap.vn/maps/styles/tm/style.json?apikey=${VIETMAP_API_KEY}`);
 
 // Vietmap GL JS UMD exposes global `vietmapgl` (NOT `vietmap`).
 const VIETMAP_GLOBAL = 'vietmapgl';
@@ -105,15 +111,34 @@ export default function VietmapMap({
         style:     VIETMAP_STYLE_URL,
         center:    [center.lng, center.lat],
         zoom,
-        // Ensure apikey is present on every tile/glyph request, in case
-        // the style.json returned URLs with an empty `?apikey=` placeholder.
-        transformRequest: (url) => {
+        // Proxy mọi request Vietmap qua backend của mình (giải quyết CORS).
+        // Backend nhận URL upstream, inject apikey, fetch, trả về kèm
+        // Access-Control-Allow-Origin: *.
+        transformRequest: (url, resourceType) => {
           if (typeof url !== 'string') return { url };
-          if (url.includes('maps.vietmap.vn') && !/[?&]apikey=[^&]+/.test(url)) {
-            const sep = url.includes('?') ? '&' : '?';
-            return { url: `${url}${sep}apikey=${VIETMAP_API_KEY}` };
+
+          // Đã đi qua proxy → pass-through
+          if (url.startsWith(API_BASE)) {
+            return { url };
           }
-          return { url };
+
+          // Bỏ qua tile request mà URL không phải Vietmap (vd: openmaptiles khác)
+          if (!url.includes('maps.vietmap.vn')) {
+            return { url };
+          }
+
+          // Inject apikey nếu thiếu (defensive)
+          let u = url;
+          if (!/[?&]apikey=[^&]+/.test(u)) {
+            u += (u.includes('?') ? '&' : '?') + 'apikey=' + VIETMAP_API_KEY;
+          }
+
+          // Đổi origin sang backend proxy
+          const proxied = u.replace(
+            'https://maps.vietmap.vn',
+            `${API_BASE}/api/vietmap`,
+          );
+          return { url: proxied, credentials: 'omit' };
         },
       });
 
