@@ -108,20 +108,20 @@ export default function DispatcherMapPage({ token, userRole }) {
 
     // ── Geocoding helpers ────────────────────────────────────────
     const loadGeocodeStatus = useCallback(async () => {
-        if (!canAdmin) return;
         try {
             const s = await apiCall('GET', '/admin/geocode/status', null, token);
             setPendingCount(s?.status?.pendingCount ?? 0);
             setGeocodeRunning(!!s?.status?.running);
             setGeocodeProgress(s?.progress ?? null);
-        } catch (_) { /* ignore */ }
-    }, [token, canAdmin]);
+        } catch (e) {
+            // Endpoint có thể từ chối nếu không phải OWNER/ADMIN — log nhẹ, không spam
+            if (e?.message && !e.message.includes('Forbidden')) {
+                console.warn('[GeocodeStatus] load failed:', e.message);
+            }
+        }
+    }, [token]);
 
     const handleGeocodeRefresh = async () => {
-        if (!canAdmin) {
-            alert('Chỉ OWNER/ADMIN mới được trigger geocode.');
-            return;
-        }
         if (geocodeRunning) return;
         setErr('');
         setGeocodeMsg('⏳ Đang gửi yêu cầu...');
@@ -131,12 +131,17 @@ export default function DispatcherMapPage({ token, userRole }) {
             setGeocodeRunning(true);
             // Poll mỗi 3s
             const iv = setInterval(async () => {
-                await loadGeocodeStatus();
-                const cur = await apiCall('GET', '/admin/geocode/status', null, token);
+                const cur = await apiCall('GET', '/admin/geocode/status', null, token).catch(() => null);
+                if (!cur) return;
+                setPendingCount(cur?.status?.pendingCount ?? 0);
+                setGeocodeProgress(cur?.progress ?? null);
+                setGeocodeRunning(!!cur?.status?.running);
                 if (!cur?.status?.running) {
                     clearInterval(iv);
                     setGeocodeRunning(false);
-                    setGeocodeMsg(`✓ Hoàn tất: ${cur?.status?.lastOk ?? 0} OK / ${cur?.status?.lastFailed ?? 0} failed`);
+                    const ok      = cur?.status?.lastOk      ?? 0;
+                    const failed  = cur?.status?.lastFailed  ?? 0;
+                    setGeocodeMsg(`✓ Hoàn tất: ${ok} OK / ${failed} failed`);
                     loadAll(); // refresh pins
                     setTimeout(() => setGeocodeMsg(''), 6000);
                 }
@@ -147,13 +152,14 @@ export default function DispatcherMapPage({ token, userRole }) {
         }
     };
 
-    // Poll status lúc mount + mỗi 30s
+    // Poll status mỗi 30s (không gate theo canAdmin — vẫn poll để hiển thị trạng thái
+    // mới nhất cho mọi role; endpoint sẽ trả 403 nếu user không phải OWNER/ADMIN)
     useEffect(() => {
-        if (!canAdmin || !token) return;
+        if (!token) return;
         loadGeocodeStatus();
         const iv = setInterval(loadGeocodeStatus, 30_000);
         return () => clearInterval(iv);
-    }, [loadGeocodeStatus, canAdmin, token]);
+    }, [loadGeocodeStatus, token]);
 
     // Khi trips thay đổi → re-color pins
     useEffect(() => {
@@ -218,6 +224,22 @@ export default function DispatcherMapPage({ token, userRole }) {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
                 <h3 style={{ margin: 0 }}>🚚 Bản đồ điều phối — {points.length} điểm / {trips.length} chuyến đang mở</h3>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    {/* Badge geocode status — hiển thị cho mọi role */}
+                    <span style={{
+                        fontSize: '0.75rem',
+                        color: pendingCount === 0 ? '#059669' : '#92400E',
+                        background: pendingCount === 0 ? '#D1FAE5' : '#FEF3C7',
+                        padding: '2px 8px',
+                        borderRadius: 12,
+                    }} title="Số partner trong DB chưa có toạ độ — được tính tự động từ backend">
+                        {geocodeRunning
+                            ? `⏳ Đang geocode ${geocodeProgress?.current ?? 0}/${(geocodeProgress?.total ?? pendingCount) || '?'}`
+                            : pendingCount === 0
+                                ? '✓ Toạ độ đầy đủ'
+                                : `⚠️ ${pendingCount} ASO thiếu toạ độ`
+                        }
+                    </span>
+                    {/* Nút trigger — chỉ OWNER/ADMIN thấy */}
                     {canAdmin && pendingCount > 0 && (
                         <button
                             className="btn btn-sm"
@@ -231,9 +253,7 @@ export default function DispatcherMapPage({ token, userRole }) {
                             }}
                             title={`Có ${pendingCount} partners chưa có toạ độ. Click để geocode tự động (~${Math.ceil(pendingCount / 40)} giây).`}
                         >
-                            {geocodeRunning
-                                ? `⏳ Đang geocode ${geocodeProgress?.current ?? 0}/${geocodeProgress?.total ?? pendingCount}…`
-                                : `🛰️ Geocode ${pendingCount} ASO thiếu toạ độ`}
+                            {geocodeRunning ? '⏳ Đang chạy...' : `🛰️ Geocode ${pendingCount} ASO`}
                         </button>
                     )}
                     <button className="btn btn-outline btn-sm" onClick={loadAll} disabled={loading}>
