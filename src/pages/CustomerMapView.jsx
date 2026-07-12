@@ -38,15 +38,18 @@ export default function CustomerMapView({ token, onClose }) {
             const data = await apiCall('GET', `/partners/geojson/all?${qs.toString()}`, null, token);
             const features = data?.features || [];
 
-            const mapped = features.map(f => ({
-                id:    f.properties.partner_id,
-                lat:   f.geometry.coordinates[1],
-                lng:   f.geometry.coordinates[0],
-                label: f.properties.partner_name,
-                icon:  '🏪',
-                color: f.properties.partner_type === 'ASO' ? '#F59E0B' : '#2563EB',
-                metadata: f.properties,
-            }));
+            const mapped = features
+                .map(f => ({
+                    id:    f.properties.partner_id,
+                    lat:   f.geometry.coordinates?.[1],
+                    lng:   f.geometry.coordinates?.[0],
+                    label: f.properties.partner_name,
+                    icon:  '🏪',
+                    color: f.properties.partner_type === 'ASO' ? '#F59E0B' : '#2563EB',
+                    metadata: f.properties,
+                }))
+                .filter(p => typeof p.lat === 'number' && typeof p.lng === 'number'
+                    && Number.isFinite(p.lat) && Number.isFinite(p.lng));
 
             setPoints(mapped);
             setTotal(data?.total ?? features.length);

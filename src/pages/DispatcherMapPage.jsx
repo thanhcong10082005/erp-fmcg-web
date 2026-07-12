@@ -41,7 +41,14 @@ export default function DispatcherMapPage({ token, userRole }) {
     const [routes, setRoutes]               = useState([]);
     const [savingId, setSavingId]           = useState(null);
 
+    // Geocoding state
+    const [pendingCount, setPendingCount]   = useState(0);
+    const [geocodeRunning, setGeocodeRunning] = useState(false);
+    const [geocodeProgress, setGeocodeProgress] = useState(null);
+    const [geocodeMsg, setGeocodeMsg]       = useState('');
+
     const canEdit = ['OWNER', 'ADMIN', 'DISPATCHER'].includes((userRole || '').toUpperCase());
+    const canAdmin = ['OWNER', 'ADMIN'].includes((userRole || '').toUpperCase());
 
     // Map từ partner_id → trip_id (để color pin)
     const partnerToTripMap = React.useMemo(() => {
@@ -70,18 +77,21 @@ export default function DispatcherMapPage({ token, userRole }) {
             ]);
 
             const features = geoRes?.features || [];
-            const mapped = features.map(f => {
-                const tripId = partnerToTripMap.get(f.properties.partner_id) || null;
-                return {
-                    id:    f.properties.partner_id,
-                    lat:   f.geometry.coordinates[1],
-                    lng:   f.geometry.coordinates[0],
-                    label: f.properties.partner_name,
-                    icon:  '🏪',
-                    color: colorForTrip(tripId),
-                    metadata: { ...f.properties, trip_id: tripId },
-                };
-            });
+            const mapped = features
+                .map(f => {
+                    const tripId = partnerToTripMap.get(f.properties.partner_id) || null;
+                    return {
+                        id:    f.properties.partner_id,
+                        lat:   f.geometry.coordinates?.[1],
+                        lng:   f.geometry.coordinates?.[0],
+                        label: f.properties.partner_name,
+                        icon:  '🏪',
+                        color: colorForTrip(tripId),
+                        metadata: { ...f.properties, trip_id: tripId },
+                    };
+                })
+                .filter(p => typeof p.lat === 'number' && typeof p.lng === 'number'
+                    && Number.isFinite(p.lat) && Number.isFinite(p.lng));
 
             setPoints(mapped);
             setRoutes([...new Set(features.map(f => f.properties.route_code).filter(Boolean))].sort());
@@ -95,6 +105,55 @@ export default function DispatcherMapPage({ token, userRole }) {
 
     // Reload khi filters đổi
     useEffect(() => { if (token) loadAll(); }, [filters, token]);
+
+    // ── Geocoding helpers ────────────────────────────────────────
+    const loadGeocodeStatus = useCallback(async () => {
+        if (!canAdmin) return;
+        try {
+            const s = await apiCall('GET', '/admin/geocode/status', null, token);
+            setPendingCount(s?.status?.pendingCount ?? 0);
+            setGeocodeRunning(!!s?.status?.running);
+            setGeocodeProgress(s?.progress ?? null);
+        } catch (_) { /* ignore */ }
+    }, [token, canAdmin]);
+
+    const handleGeocodeRefresh = async () => {
+        if (!canAdmin) {
+            alert('Chỉ OWNER/ADMIN mới được trigger geocode.');
+            return;
+        }
+        if (geocodeRunning) return;
+        setErr('');
+        setGeocodeMsg('⏳ Đang gửi yêu cầu...');
+        try {
+            const r = await apiCall('POST', '/admin/geocode/refresh', { reason: 'manual-dispatcher' }, token);
+            setGeocodeMsg(r.message || 'Đã trigger');
+            setGeocodeRunning(true);
+            // Poll mỗi 3s
+            const iv = setInterval(async () => {
+                await loadGeocodeStatus();
+                const cur = await apiCall('GET', '/admin/geocode/status', null, token);
+                if (!cur?.status?.running) {
+                    clearInterval(iv);
+                    setGeocodeRunning(false);
+                    setGeocodeMsg(`✓ Hoàn tất: ${cur?.status?.lastOk ?? 0} OK / ${cur?.status?.lastFailed ?? 0} failed`);
+                    loadAll(); // refresh pins
+                    setTimeout(() => setGeocodeMsg(''), 6000);
+                }
+            }, 3000);
+        } catch (e) {
+            setGeocodeMsg('✗ Lỗi: ' + e.message);
+            setTimeout(() => setGeocodeMsg(''), 6000);
+        }
+    };
+
+    // Poll status lúc mount + mỗi 30s
+    useEffect(() => {
+        if (!canAdmin || !token) return;
+        loadGeocodeStatus();
+        const iv = setInterval(loadGeocodeStatus, 30_000);
+        return () => clearInterval(iv);
+    }, [loadGeocodeStatus, canAdmin, token]);
 
     // Khi trips thay đổi → re-color pins
     useEffect(() => {
@@ -158,10 +217,47 @@ export default function DispatcherMapPage({ token, userRole }) {
             {/* Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
                 <h3 style={{ margin: 0 }}>🚚 Bản đồ điều phối — {points.length} điểm / {trips.length} chuyến đang mở</h3>
-                <button className="btn btn-outline btn-sm" onClick={loadAll} disabled={loading}>
-                    {loading ? '⏳ Đang tải...' : '🔄 Làm mới'}
-                </button>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    {canAdmin && pendingCount > 0 && (
+                        <button
+                            className="btn btn-sm"
+                            onClick={handleGeocodeRefresh}
+                            disabled={geocodeRunning}
+                            style={{
+                                background: geocodeRunning ? '#FCD34D' : '#F59E0B',
+                                color: '#fff',
+                                border: 'none',
+                                cursor: geocodeRunning ? 'wait' : 'pointer',
+                            }}
+                            title={`Có ${pendingCount} partners chưa có toạ độ. Click để geocode tự động (~${Math.ceil(pendingCount / 40)} giây).`}
+                        >
+                            {geocodeRunning
+                                ? `⏳ Đang geocode ${geocodeProgress?.current ?? 0}/${geocodeProgress?.total ?? pendingCount}…`
+                                : `🛰️ Geocode ${pendingCount} ASO thiếu toạ độ`}
+                        </button>
+                    )}
+                    <button className="btn btn-outline btn-sm" onClick={loadAll} disabled={loading}>
+                        {loading ? '⏳ Đang tải...' : '🔄 Làm mới'}
+                    </button>
+                </div>
             </div>
+            {geocodeMsg && (
+                <div style={{
+                    background: geocodeMsg.startsWith('✓') ? '#D1FAE5' : geocodeMsg.startsWith('✗') ? '#FEE2E2' : '#FEF3C7',
+                    color: '#1F2937',
+                    padding: 8,
+                    borderRadius: 4,
+                    marginBottom: 8,
+                    fontSize: '0.85rem',
+                }}>
+                    {geocodeMsg}
+                </div>
+            )}
+            {canAdmin && geocodeProgress && geocodeRunning && geocodeProgress.lastError && (
+                <div style={{ fontSize: '0.75rem', color: '#6B7280', marginBottom: 8 }}>
+                    Last error: <code>{geocodeProgress.lastError}</code>
+                </div>
+            )}
 
             {err && (
                 <div style={{ background: '#FEE2E2', color: '#B91C1C', padding: 8, borderRadius: 4, marginBottom: 12 }}>
