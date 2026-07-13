@@ -49,6 +49,17 @@ const VIETMAP_TILE_API_KEY = import.meta.env.VIETMAP_TILE_API_KEY     || '';
 const VIETMAP_STYLE_URL    = import.meta.env.VITE_VIETMAP_STYLE       || '';
 const USE_VIETMAP          = import.meta.env.VITE_USE_VIETMAP_TILES === 'true';
 
+// Debug: log env vars vào console để verify trên production
+if (USE_VIETMAP) {
+  // eslint-disable-next-line no-console
+  console.info('[VietmapMap] ENV →',
+    'USE_VIETMAP=', USE_VIETMAP,
+    '| TILE_KEY set:', !!import.meta.env.VITE_VIETMAP_TILE_API_KEY,
+    '| STYLE_URL:', import.meta.env.VITE_VIETMAP_STYLE || '(default tm)',
+    '| MAP_STYLE_URL:', import.meta.env.VITE_MAP_STYLE_URL || '(none)',
+  );
+}
+
 // OpenFreeMap: free, no API key, hỗ trợ name:latin + name:nonlatin (Tiếng Việt có dấu).
 const OPENFREEMAP_LIBERTY = 'https://tiles.openfreemap.org/styles/liberty';
 const OPENFREEMAP_POSITRON = 'https://tiles.openfreemap.org/styles/positron';
@@ -180,7 +191,11 @@ export default function VietmapMap({
       map.on('load', () => {
         if (cancelled) return;
         renderMarkers(map, vietmap);
-        if (fitBounds && points.length > 1) fitMapToPoints(map, points);
+        const validPoints = points.filter(p => typeof p.lat === 'number' && typeof p.lng === 'number');
+        if (fitBounds && validPoints.length > 1 && !initFlag.current) {
+          initFlag.current = true;
+          fitMapToPoints(map, validPoints);
+        }
       });
 
       mapRef.current = map;
@@ -199,13 +214,19 @@ export default function VietmapMap({
   }, []);
 
   // ── Re-render markers khi points đổi ─────────────────────────────────
+  // Dùng initFlag để fitBounds CHỈ chạy 1 lần duy nhất khi map khởi tạo.
+  // Sau đó points có thay đổi (drag, re-color) thì KHÔNG fit lại → giữ nguyên viewport.
+  const initFlag = React.useRef(false);
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
     loadVietmap().then((vietmap) => {
       if (!vietmap || !mapRef.current) return;
       renderMarkers(mapRef.current, vietmap);
-      if (fitBounds && points.length > 1) fitMapToPoints(mapRef.current, points);
+      if (fitBounds && points.length > 1 && !initFlag.current) {
+        initFlag.current = true;
+        fitMapToPoints(mapRef.current, points);
+      }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [points]);
