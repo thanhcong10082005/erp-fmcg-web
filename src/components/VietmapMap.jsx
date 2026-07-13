@@ -139,7 +139,6 @@ export default function VietmapMap({
 }) {
   const containerRef = useRef(null);
   const mapRef       = useRef(null);
-  const markersRef   = useRef([]);
 
   // ── Mount: load Vietmap + init map ────────────────────────────────────
   useEffect(() => {
@@ -209,6 +208,8 @@ export default function VietmapMap({
         try { mapRef.current.remove(); } catch (_) { /* ignore */ }
         mapRef.current = null;
       }
+      // Reset markers map khi map bị unmount (React Strict Mode hoặc re-mount)
+      markersRef.current = new Map();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -216,66 +217,95 @@ export default function VietmapMap({
   // ── Re-render markers khi points đổi ─────────────────────────────────
   // Dùng initFlag để fitBounds CHỈ chạy 1 lần duy nhất khi map khởi tạo.
   // Sau đó points có thay đổi (drag, re-color) thì KHÔNG fit lại → giữ nguyên viewport.
+  // Markers map: { id → Marker instance } để update differential (không remove all/add all).
+  const markersRef = React.useRef(new Map());     // id -> Marker
   const initFlag = React.useRef(false);
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
     loadVietmap().then((vietmap) => {
       if (!vietmap || !mapRef.current) return;
-      renderMarkers(mapRef.current, vietmap);
+      diffUpdateMarkers(mapRef.current, vietmap);
       if (fitBounds && points.length > 1 && !initFlag.current) {
         initFlag.current = true;
-        fitMapToPoints(mapRef.current, points);
+        const valid = points.filter(p => typeof p.lat === 'number' && typeof p.lng === 'number');
+        if (valid.length > 1) fitMapToPoints(mapRef.current, valid);
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [points]);
 
+  function diffUpdateMarkers(map, vietmap) {
+    const valid = points.filter(p => typeof p.lat === 'number' && typeof p.lng === 'number');
+    const newIds = new Set(valid.map(p => p.id));
+    const map_ = markersRef.current;
+
+    // 1. Xoá markers không còn trong points
+    for (const [id, marker] of map_.entries()) {
+      if (!newIds.has(id)) {
+        try { marker.remove(); } catch (_) { /* ignore */ }
+        map_.delete(id);
+      }
+    }
+
+    // 2. Update hoặc thêm mới
+    valid.forEach(p => {
+      const existing = map_.get(p.id);
+      if (existing) {
+        // Update toạ độ + style (chỉ khi thật sự đổi)
+        const ll = existing.getLngLat();
+        if (Math.abs(ll.lat - p.lat) > 1e-7 || Math.abs(ll.lng - p.lng) > 1e-7) {
+          existing.setLngLat([p.lng, p.lat]);
+        }
+        // Cập nhật màu nếu đổi
+        const el = existing.getElement();
+        const expectedBg = p.color || '#2563EB';
+        if (el && el.style.background !== expectedBg) {
+          el.style.background = expectedBg;
+        }
+      } else {
+        // Tạo marker mới
+        const el = document.createElement('div');
+        el.className = 'vietmap-pin';
+        el.style.cssText = `
+          width: 24px; height: 24px;
+          background: ${p.color || '#2563EB'};
+          border: 2px solid #fff;
+          border-radius: 50%;
+          box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+          cursor: ${draggable ? 'grab' : 'pointer'};
+          display: flex; align-items: center; justify-content: center;
+          font-size: 11px; font-weight: 700; color: #fff;
+        `;
+        el.title = p.label || '';
+        el.textContent = p.icon || '';
+
+        const marker = new vietmap.Marker({ element: el, draggable })
+          .setLngLat([p.lng, p.lat])
+          .addTo(map);
+
+        if (onPointClick) {
+          el.addEventListener('click', (e) => {
+            e.stopPropagation();
+            onPointClick(p);
+          });
+        }
+
+        if (draggable && onLocationChange) {
+          marker.on('dragend', () => {
+            const lngLat = marker.getLngLat();
+            onLocationChange({ ...p, lat: lngLat.lat, lng: lngLat.lng });
+          });
+        }
+
+        map_.set(p.id, marker);
+      }
+    });
+  }
+
   function renderMarkers(map, vietmap) {
-    // Xoá markers cũ
-    markersRef.current.forEach(m => {
-      try { m.remove(); } catch (_) { /* ignore */ }
-    });
-    markersRef.current = [];
-
-    points.forEach(p => {
-      if (typeof p.lat !== 'number' || typeof p.lng !== 'number') return;
-
-      const el = document.createElement('div');
-      el.className = 'vietmap-pin';
-      el.style.cssText = `
-        width: 24px; height: 24px;
-        background: ${p.color || '#2563EB'};
-        border: 2px solid #fff;
-        border-radius: 50%;
-        box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-        cursor: ${draggable ? 'grab' : 'pointer'};
-        display: flex; align-items: center; justify-content: center;
-        font-size: 11px; font-weight: 700; color: #fff;
-      `;
-      el.title = p.label || '';
-      el.textContent = p.icon || '';
-
-      const marker = new vietmap.Marker({ element: el, draggable })
-        .setLngLat([p.lng, p.lat])
-        .addTo(map);
-
-      if (onPointClick) {
-        el.addEventListener('click', (e) => {
-          e.stopPropagation();
-          onPointClick(p);
-        });
-      }
-
-      if (draggable && onLocationChange) {
-        marker.on('dragend', () => {
-          const lngLat = marker.getLngLat();
-          onLocationChange({ ...p, lat: lngLat.lat, lng: lngLat.lng });
-        });
-      }
-
-      markersRef.current.push(marker);
-    });
+    // Giữ cho back-compat (gọi lần đầu từ map.on('load'))
+    diffUpdateMarkers(map, vietmap);
   }
 
   function fitMapToPoints(map, pts) {
