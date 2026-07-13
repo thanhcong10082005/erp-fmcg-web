@@ -145,13 +145,10 @@ export default function VietmapMap({
             return { url };
           }
 
-          // Nếu không dùng Vietmap tiles, để OpenFreeMap tự quản lý CORS
-          if (!USE_VIETMAP) {
-            return { url };
-          }
-
-          // Chỉ proxy request Vietmap
-          if (!url.includes('maps.vietmap.vn')) {
+          // Chỉ proxy Vietmap tiles khi USE_VIETMAP=true và là request tới maps.vietmap.vn
+          // Khi USE_VIETMAP=false (default = OpenFreeMap), tất cả request đi thẳng
+          // qua OpenFreeMap hoặc CDN gốc — không cần proxy.
+          if (!USE_VIETMAP || !url.includes('maps.vietmap.vn')) {
             return { url };
           }
 
