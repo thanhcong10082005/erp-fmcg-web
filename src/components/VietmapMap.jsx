@@ -45,7 +45,7 @@ const API_ORIGIN = RAW_API_BASE.replace(/\/+$/, '').replace(/\/api$/, '');
 const VIETMAP_PROXY_BASE = `${API_ORIGIN}/api/vietmap`;
 
 const VIETMAP_API_KEY      = import.meta.env.VITE_VIETMAP_API_KEY      || '';
-const VIETMAP_TILE_API_KEY = import.meta.env.VIETMAP_TILE_API_KEY     || VIETMAP_API_KEY;
+const VIETMAP_TILE_API_KEY = import.meta.env.VIETMAP_TILE_API_KEY     || '';
 const VIETMAP_STYLE_URL    = import.meta.env.VITE_VIETMAP_STYLE       || '';
 const USE_VIETMAP          = import.meta.env.VITE_USE_VIETMAP_TILES === 'true';
 
@@ -57,13 +57,21 @@ const OPENFREEMAP_BRIGHT  = 'https://tiles.openfreemap.org/styles/bright';
 let RESOLVED_STYLE_URL;
 if (import.meta.env.VITE_MAP_STYLE_URL) {
   RESOLVED_STYLE_URL = import.meta.env.VITE_MAP_STYLE_URL;
-} else if (USE_VIETMAP) {
-  // Browser → Vietmap CDN trực tiếp (CORS *, key=1f7fe529...). Style URL có sẵn thì dùng.
-  // Nếu chưa set style URL thì dùng Vietmap tm style trực tiếp.
+} else if (USE_VIETMAP && VIETMAP_TILE_API_KEY) {
+  // Browser → Vietmap CDN trực tiếp (CORS *, browser IP OK, dùng TILE KEY).
+  // Style URL có sẵn thì dùng, ngược lại dùng Vietmap tm style.
   RESOLVED_STYLE_URL = VIETMAP_STYLE_URL
     ? `${VIETMAP_STYLE_URL}${VIETMAP_STYLE_URL.includes('?') ? '&' : '?'}apikey=${encodeURIComponent(VIETMAP_TILE_API_KEY)}`
-    : `${VIETMAP_PROXY_BASE}/maps/styles/tm/style.json?apikey=${encodeURIComponent(VIETMAP_TILE_API_KEY)}`;
+    : `https://maps.vietmap.vn/maps/styles/tm/style.json?apikey=${encodeURIComponent(VIETMAP_TILE_API_KEY)}`;
 } else {
+  // Default fallback: OpenFreeMap Liberty (miễn phí, luôn work, không cần key).
+  if (USE_VIETMAP && !VIETMAP_TILE_API_KEY) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[VietmapMap] VITE_USE_VIETMAP_TILES=true nhưng VITE_VIETMAP_TILE_API_KEY chưa set — ' +
+      'fallback về OpenFreeMap. Set tile key (1f7fe529...) trên Vercel Dashboard.'
+    );
+  }
   RESOLVED_STYLE_URL = OPENFREEMAP_LIBERTY;
 }
 
