@@ -29,34 +29,43 @@ const VIETMAP_JS  = 'https://unpkg.com/@vietmap/vietmap-gl-js@6.0.1/dist/vietmap
 const VIETMAP_GLOBAL = 'vietmapgl';
 
 // ═══ Style options ══════════════════════════════════════════════════════
-// Quyết định provider dựa trên env:
+// Chọn style theo thứ tự ưu tiên:
 //
-// 1) VITE_MAP_STYLE_URL — nếu set, dùng literal (vd: cloudfront hosted)
-// 2) Else dùng OpenFreeMap (default — miễn phí, không cần API key, OK từ
-//    mọi IP kể cả Render). Vietnam cities hiển thị name:en + name:vi.
+// 1) VITE_MAP_STYLE_URL — nếu set, dùng literal
+// 2) VITE_USE_VIETMAP_TILES=true → dùng Vietmap tiles (key=1f7fe529...)
+//      a. VITE_VIETMAP_STYLE đã set sẵn URL style → dùng trực tiếp từ Vietmap CDN
+//         (browser IP được phép, CORS open, không cần proxy)
+//      b. Fallback → proxy qua backend /api/vietmap
+// 3) Mặc định → OpenFreeMap Liberty (miễn phí, không cần key)
 //
-// 3) Vietmap proxy fallback nếu VITE_USE_VIETMAP_TILES=true
-//    (đã setup ở backend, bị 404 do Render IP bị Vietmap chặn — KHÔNG kích hoạt
-//    trừ khi đã verify proxy works).
-//
-// VITE_VIETMAP_API_KEY — chỉ dùng cho geocoding API (chuyển địa chỉ text → lat/lng)
-//                          qua backend /api/vietmap/search.
+// VITE_VIETMAP_API_KEY       — geocoding key (296e6736...), dùng qua backend
+// VITE_VIETMAP_TILE_API_KEY  — tile key (1f7fe529...), dùng cho tile/style/sprite/font
 const RAW_API_BASE = import.meta.env.VITE_API_URL || '';
 const API_ORIGIN = RAW_API_BASE.replace(/\/+$/, '').replace(/\/api$/, '');
 const VIETMAP_PROXY_BASE = `${API_ORIGIN}/api/vietmap`;
-const VIETMAP_API_KEY = import.meta.env.VITE_VIETMAP_API_KEY || '';
-const USE_VIETMAP = import.meta.env.VITE_USE_VIETMAP_TILES === 'true';
+
+const VIETMAP_API_KEY      = import.meta.env.VITE_VIETMAP_API_KEY      || '';
+const VIETMAP_TILE_API_KEY = import.meta.env.VIETMAP_TILE_API_KEY     || VIETMAP_API_KEY;
+const VIETMAP_STYLE_URL    = import.meta.env.VITE_VIETMAP_STYLE       || '';
+const USE_VIETMAP          = import.meta.env.VITE_USE_VIETMAP_TILES === 'true';
 
 // OpenFreeMap: free, no API key, hỗ trợ name:latin + name:nonlatin (Tiếng Việt có dấu).
 const OPENFREEMAP_LIBERTY = 'https://tiles.openfreemap.org/styles/liberty';
 const OPENFREEMAP_POSITRON = 'https://tiles.openfreemap.org/styles/positron';
 const OPENFREEMAP_BRIGHT  = 'https://tiles.openfreemap.org/styles/bright';
 
-const VIETMAP_STYLE_URL =
-  import.meta.env.VITE_MAP_STYLE_URL ||
-  (USE_VIETMAP
-    ? `${VIETMAP_PROXY_BASE}/maps/styles/tm/style.json?apikey=${VIETMAP_API_KEY}`
-    : OPENFREEMAP_LIBERTY);
+let RESOLVED_STYLE_URL;
+if (import.meta.env.VITE_MAP_STYLE_URL) {
+  RESOLVED_STYLE_URL = import.meta.env.VITE_MAP_STYLE_URL;
+} else if (USE_VIETMAP) {
+  // Browser → Vietmap CDN trực tiếp (CORS *, key=1f7fe529...). Style URL có sẵn thì dùng.
+  // Nếu chưa set style URL thì dùng Vietmap tm style trực tiếp.
+  RESOLVED_STYLE_URL = VIETMAP_STYLE_URL
+    ? `${VIETMAP_STYLE_URL}${VIETMAP_STYLE_URL.includes('?') ? '&' : '?'}apikey=${encodeURIComponent(VIETMAP_TILE_API_KEY)}`
+    : `${VIETMAP_PROXY_BASE}/maps/styles/tm/style.json?apikey=${encodeURIComponent(VIETMAP_TILE_API_KEY)}`;
+} else {
+  RESOLVED_STYLE_URL = OPENFREEMAP_LIBERTY;
+}
 
 let vietmapLoading = null;
 
@@ -122,16 +131,16 @@ export default function VietmapMap({
 
       const map = new vietmap.Map({
         container: containerRef.current,
-        style:     VIETMAP_STYLE_URL,
+        style:     RESOLVED_STYLE_URL,
         center:    [center.lng, center.lat],
         zoom,
-        // Proxy mọi request Vietmap qua backend của mình (giải quyết CORS).
-        // Backend nhận URL upstream, inject apikey, fetch, trả về kèm
-        // Access-Control-Allow-Origin: *.
+        // Proxy mọi request Vietmap qua backend của mình (giải quyết CORS khi
+        // Render IP bị Vietmap chặn). Backend nhận URL upstream, inject apikey,
+        // fetch, trả về kèm Access-Control-Allow-Origin: *.
         transformRequest: (url, resourceType) => {
           if (typeof url !== 'string') return { url };
 
-          // Đã đi qua proxy hoặc là external allowed → pass-through
+          // Đã đi qua proxy → pass-through
           if (url.startsWith(VIETMAP_PROXY_BASE)) {
             return { url };
           }
@@ -141,19 +150,18 @@ export default function VietmapMap({
             return { url };
           }
 
-          // Bỏ qua tile request mà URL không phải Vietmap
+          // Chỉ proxy request Vietmap
           if (!url.includes('maps.vietmap.vn')) {
             return { url };
           }
 
-          // Inject apikey nếu thiếu (defensive)
+          // Inject apikey nếu thiếu
           let u = url;
-          if (!/[?&]apikey=[^&]+/.test(u)) {
-            u += (u.includes('?') ? '&' : '?') + 'apikey=' + VIETMAP_API_KEY;
+          if (!/[?&]apikey=[^&]+/.test(u) && !/[?&]api[-_]key=[^&]+/i.test(u)) {
+            u += (u.includes('?') ? '&' : '?') + 'apikey=' + encodeURIComponent(VIETMAP_TILE_API_KEY);
           }
 
           // Đổi origin sang backend proxy
-          //   https://maps.vietmap.vn/maps/tiles/...  →  ${VIETMAP_PROXY_BASE}/maps/tiles/...
           const proxied = u.replace(
             'https://maps.vietmap.vn',
             VIETMAP_PROXY_BASE,
