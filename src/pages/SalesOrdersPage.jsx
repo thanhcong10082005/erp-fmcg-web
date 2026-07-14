@@ -20,6 +20,8 @@ export default function SalesOrdersPage({ token }) {
     const [products, setProducts] = useState([]);
     const [partnerSearch, setPartnerSearch] = useState('');
     const [productSearch, setProductSearch] = useState('');
+    // Per-row product search state: productSearchIdx[idx] = search string for row idx
+    const [productSearchIdx, setProductSearchIdx] = useState({});
     const [form, setForm] = useState({
         partner_id: '', warehouse_id: 1,
         expected_date: '', notes: '',
@@ -58,17 +60,18 @@ export default function SalesOrdersPage({ token }) {
 
     const loadProducts = useCallback(async () => {
         try {
-            const qs = new URLSearchParams(); qs.set('limit', '200');
-            if (productSearch) qs.set('search', productSearch);
+            // Load all products at once (client-side filter by productSearchIdx per row)
+            const qs = new URLSearchParams(); qs.set('limit', '5000');
             const data = await apiCall('GET', '/products?' + qs.toString(), null, token);
             setProducts(Array.isArray(data) ? data : (data?.data ?? []));
         } catch (e) { /* ignore */ }
-    }, [token, productSearch]);
+    }, [token]);
 
     const openCreate = async () => {
         setForm({ partner_id: '', warehouse_id: 1, expected_date: '', notes: '', items: [EMPTY_ITEM()] });
         setFormErr('');
         setPartnerSearch(''); setProductSearch('');
+        setProductSearchIdx({});
         await Promise.all([loadWarehouses(), loadProducts()]);
         await loadPartners();
         setShowForm(true);
@@ -313,18 +316,62 @@ export default function SalesOrdersPage({ token }) {
 
                             {/* Header row */}
                             <div className="grid-3" style={{ marginBottom: 20 }}>
+                                {/* ── Khách hàng: search + dropdown + geo badge ── */}
                                 <div className="form-group">
                                     <label>Khách hàng *</label>
-                                    <select value={form.partner_id} required
-                                        onChange={e => setForm(f => ({ ...f, partner_id: e.target.value }))}
-                                        style={{ width: '100%' }}>
-                                        <option value="">— Chọn khách hàng —</option>
-                                        {partners.map(p => (
-                                            <option key={p.partner_id} value={p.partner_id}>
-                                                {p.partner_code} — {p.partner_name} ({p.partner_type})
-                                            </option>
-                                        ))}
-                                    </select>
+                                    <div style={{ position: 'relative' }}>
+                                        <input
+                                            type="text"
+                                            value={partnerSearch}
+                                            placeholder="🔎 Tìm mã / tên ASO..."
+                                            onChange={e => { setPartnerSearch(e.target.value); loadPartners(); }}
+                                            style={{ width: '100%', padding: '6px 10px', fontSize: '0.85rem' }}
+                                        />
+                                        {/* Dropdown */}
+                                        {partners.length > 0 && (
+                                            <select
+                                                size={Math.min(partners.length, 8)}
+                                                value={form.partner_id}
+                                                onChange={e => {
+                                                    setForm(f => ({ ...f, partner_id: e.target.value }));
+                                                    setPartnerSearch('');
+                                                    setPartners([]);
+                                                }}
+                                                style={{
+                                                    position: 'absolute', top: '100%', left: 0, right: 0,
+                                                    zIndex: 10, background: '#fff',
+                                                    border: '1px solid #D1D5DB', borderRadius: 4,
+                                                    maxHeight: 240, overflowY: 'auto', fontSize: '0.82rem',
+                                                    boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
+                                                }}
+                                            >
+                                                {partners.map(p => (
+                                                    <option key={p.partner_id} value={p.partner_id}>
+                                                        {p.partner_code} — {p.partner_name} ({p.partner_type})
+                                                        {p.geocoding_confidence === 'HIGH' || p.geocoding_confidence === 'MANUAL' ? ' ✅' : p.geocoding_confidence === 'MEDIUM' ? ' ○' : p.geocoding_confidence === 'LOW' ? ' ⚠️' : ' ❌'}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        )}
+                                    </div>
+                                    {form.partner_id && (() => {
+                                        const sel = partners.find(p => String(p.partner_id) === String(form.partner_id));
+                                        return sel ? (
+                                            <div style={{
+                                                marginTop: 4, padding: '4px 8px', borderRadius: 4, fontSize: '0.78rem',
+                                                background: (sel.geocoding_confidence === 'HIGH' || sel.geocoding_confidence === 'MANUAL') ? '#DCFCE7'
+                                                    : sel.geocoding_confidence === 'MEDIUM' ? '#FEF9C3'
+                                                    : sel.geocoding_confidence === 'LOW' ? '#FEF3C7'
+                                                    : '#FEE2E2',
+                                                color: (sel.geocoding_confidence === 'HIGH' || sel.geocoding_confidence === 'MANUAL') ? '#166534'
+                                                    : sel.geocoding_confidence === 'MEDIUM' ? '#854D0E'
+                                                    : sel.geocoding_confidence === 'LOW' ? '#92400E'
+                                                    : '#991B1B',
+                                            }}>
+                                                {(sel.geocoding_confidence === 'HIGH' || sel.geocoding_confidence === 'MANUAL') ? '✅ Tọa độ tốt' : sel.geocoding_confidence === 'MEDIUM' ? '○ Tọa độ trung bình' : sel.geocoding_confidence === 'LOW' ? '⚠️ Tọa độ yếu' : '❌ Chưa có tọa độ'}
+                                            </div>
+                                        ) : null;
+                                    })()}
                                 </div>
                                 <div className="form-group">
                                     <label>Kho xuất *</label>
@@ -382,16 +429,57 @@ export default function SalesOrdersPage({ token }) {
                                                 <tr key={idx} style={{ borderBottom: '1px solid #F3F4F6' }}>
                                                     <td style={{ padding: '6px 8px', color: '#6B7280' }}>{idx + 1}</td>
                                                     <td style={{ padding: '4px 4px' }}>
-                                                        <select value={it.product_id}
-                                                            onChange={e => handleProductSelect(idx, e.target.value)}
-                                                            style={{ width: '100%', padding: '4px 6px', fontSize: '0.85rem' }}>
-                                                            <option value="">— Chọn SP —</option>
-                                                            {products.map(p => (
-                                                                <option key={p.product_id} value={p.product_id}>
-                                                                    {p.sku} — {p.product_name} ({fmt.vnd(p.selling_price)})
-                                                                </option>
-                                                            ))}
-                                                        </select>
+                                                        <div style={{ position: 'relative' }}>
+                                                            <input
+                                                                type="text"
+                                                                value={productSearchIdx[idx] || ''}
+                                                                placeholder="Tìm SKU / tên SP..."
+                                                                onChange={e => {
+                                                                    const val = e.target.value;
+                                                                    setProductSearchIdx(prev => ({ ...prev, [idx]: val }));
+                                                                }}
+                                                                onFocus={() => {
+                                                                    if (products.length === 0) loadProducts();
+                                                                }}
+                                                                style={{ width: '100%', padding: '4px 6px', fontSize: '0.82rem', marginBottom: 2 }}
+                                                            />
+                                                            <select
+                                                                size={Math.min(
+                                                                    products.filter(p => {
+                                                                        const q = (productSearchIdx[idx] || '').toLowerCase();
+                                                                        if (!q) return true;
+                                                                        return (p.sku || '').toLowerCase().includes(q) ||
+                                                                            (p.product_name || '').toLowerCase().includes(q);
+                                                                    }).length,
+                                                                    6
+                                                                )}
+                                                                value={it.product_id}
+                                                                onChange={e => {
+                                                                    handleProductSelect(idx, e.target.value);
+                                                                    setProductSearchIdx(prev => ({ ...prev, [idx]: '' }));
+                                                                }}
+                                                                style={{
+                                                                    position: 'absolute', top: '100%', left: 0, right: 0,
+                                                                    zIndex: 10, background: '#fff',
+                                                                    border: '1px solid #D1D5DB', borderRadius: 4,
+                                                                    maxHeight: 180, overflowY: 'auto', fontSize: '0.80rem',
+                                                                    boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
+                                                                }}
+                                                            >
+                                                                {products
+                                                                    .filter(p => {
+                                                                        const q = (productSearchIdx[idx] || '').toLowerCase();
+                                                                        if (!q) return true;
+                                                                        return (p.sku || '').toLowerCase().includes(q) ||
+                                                                            (p.product_name || '').toLowerCase().includes(q);
+                                                                    })
+                                                                    .map(p => (
+                                                                        <option key={p.product_id} value={p.product_id}>
+                                                                            {p.sku} — {p.product_name} ({fmt.vnd(p.selling_price)})
+                                                                        </option>
+                                                                    ))}
+                                                            </select>
+                                                        </div>
                                                         {selectedProduct && (
                                                             <div style={{ fontSize: '0.72rem', color: '#10B981', marginTop: 2, paddingLeft: 4 }}>
                                                                 ✓ {selectedProduct.product_name}
