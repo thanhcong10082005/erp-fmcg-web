@@ -12,6 +12,7 @@ import ReportsPage from './pages/ReportsPage';
 import RbacAdminPage from './pages/RbacAdminPage';
 import LogisticsPage from './pages/LogisticsPage';
 import DispatcherMapPage from './pages/DispatcherMapPage';
+import AuditMapPage from './pages/AuditMapPage';
 import PaymentsPage from './pages/PaymentsPage';
 import MfaSetup from './components/MfaSetup';
 import MfaVerify from './components/MfaVerify';
@@ -69,6 +70,7 @@ const NAV_ITEMS = [
     { id: 'sales', label: 'Đơn bán hàng', icon: '🛒' },
     { id: 'logistics', label: 'Giao hàng', icon: '🚚' },
     { id: 'dispatcher-map', label: 'Bản đồ điều phối', icon: '🗺️' },
+    { id: 'audit-map', label: 'Audit Map', icon: '🔍' },
     { id: 'warehouse', label: 'Kho & Tồn kho', icon: '🏭' },
     { id: 'invoices', label: 'Hóa đơn', icon: '🧾' },
     { id: 'payments', label: 'Thu chi', icon: '💳' },
@@ -245,6 +247,7 @@ function ErpAppShell() {
                     {section === 'invoices' && <InvoicesPage token={jwtToken}/>}
                     {section === 'logistics' && <LogisticsPage token={jwtToken}/>}
                     {section === 'dispatcher-map' && <DispatcherMapPage token={jwtToken} userRole={userRole}/>}
+                    {section === 'audit-map' && <AuditMapPage token={jwtToken}/>}
                     {section === 'payments' && <PaymentsPage token={jwtToken}/>}
                     {section === 'reports' && <ReportsPage token={jwtToken}/>}
                     {section === 'rbac' && <RbacAdminPage token={jwtToken}/>}

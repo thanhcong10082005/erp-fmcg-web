@@ -2,69 +2,58 @@
  * VietmapMap — Reusable wrapper around Vietmap GL JS.
  *
  * Loaded via CDN (unpkg) to avoid bundling 12MB into the main app.
- *
- * NOTE: Vietmap GL JS UMD bundle exposes global `vietmapgl` (not `vietmap`).
+ * Vietmap GL JS UMD bundle exposes global `vietmapgl` (not `vietmap`).
  *
  * Props:
- *   - points:        Array<{ lat, lng, id, label, color?, metadata? }>
- *   - center:        { lat, lng }   — initial map center
- *   - zoom:          number         — initial zoom (default 11)
- *   - height:        string         — CSS height (default '500px')
- *   - onPointClick:  (point) => void
- *   - fitBounds:     boolean        — auto-fit to points (default true)
- *   - draggable:     boolean        — pins are draggable
- *   - onLocationChange: ({id, lat, lng}) => void  — fires after drag
+ *   - points:            Array<{ lat, lng, id, label, color?, metadata? }>
+ *   - center:            { lat, lng }   — initial map center
+ *   - zoom:              number         — initial zoom (default 11)
+ *   - height:            string         — CSS height (default '500px')
+ *   - onPointClick:      (point) => void
+ *   - fitBounds:         boolean        — auto-fit to points (default true)
+ *   - draggable:         boolean        — pins are draggable
+ *   - onLocationChange:  ({id, lat, lng}) => void  — fires after drag
  *
- * Usage:
- *   <VietmapMap points={pins} height="600px" onPointClick={handleClick} />
+ * Phase 3 — Route Lines:
+ *   - routeGeometry:     GeoJSON LineString | null — route line to render
+ *   - routeColor:        string — line color (default #2563EB)
+ *   - routeWidth:        number — line width px (default 3)
+ *
+ * Phase 4 — Popup:
+ *   - selectedPoint:      point | null — điểm đang được chọn (hiện popup)
+ *   - onAssignRequest:   (point) => void — user bấm "Gán" trên popup
+ *   - tripOptions:        Array<{trip_id, trip_number}> — dropdown trong popup
+ *
+ * Phase 5 — Data-rich Pins:
+ *   - stop_order:        lấy từ point.metadata.stop_order
+ *   - total_weight:      lấy từ point.metadata.total_weight
  */
 
 import React, { useEffect, useRef } from 'react';
 
-// ═══ SDK ═════════════════════════════════════════════════════════════════
-// Vietmap GL JS hoàn toàn tương thích với MapLibre GL (Vietmap = fork).
-// Có thể dùng style từ bất kỳ provider nào (OpenMapTiles, Stadia, OpenFreeMap).
-const VIETMAP_CSS = 'https://unpkg.com/@vietmap/vietmap-gl-js@6.0.1/dist/vietmap-gl.css';
-const VIETMAP_JS  = 'https://unpkg.com/@vietmap/vietmap-gl-js@6.0.1/dist/vietmap-gl.js';
+const VIETMAP_CSS    = 'https://unpkg.com/@vietmap/vietmap-gl-js@6.0.1/dist/vietmap-gl.css';
+const VIETMAP_JS     = 'https://unpkg.com/@vietmap/vietmap-gl-js@6.0.1/dist/vietmap-gl.js';
 const VIETMAP_GLOBAL = 'vietmapgl';
 
-// ═══ Style options ══════════════════════════════════════════════════════
-// Chọn style theo thứ tự ưu tiên:
-//
-// 1) VITE_MAP_STYLE_URL — nếu set, dùng literal
-// 2) VITE_USE_VIETMAP_TILES=true → dùng Vietmap tiles (key=1f7fe529...)
-//      a. VITE_VIETMAP_STYLE đã set sẵn URL style → dùng trực tiếp từ Vietmap CDN
-//         (browser IP được phép, CORS open, không cần proxy)
-//      b. Fallback → proxy qua backend /api/vietmap
-// 3) Mặc định → OpenFreeMap Liberty (miễn phí, không cần key)
-//
-// VITE_VIETMAP_API_KEY       — geocoding key (296e6736...), dùng qua backend
-// VITE_VIETMAP_TILE_API_KEY  — tile key (1f7fe529...), dùng cho tile/style/sprite/font
-const RAW_API_BASE = import.meta.env.VITE_API_URL || '';
-const API_ORIGIN = RAW_API_BASE.replace(/\/+$/, '').replace(/\/api$/, '');
+const RAW_API_BASE      = import.meta.env.VITE_API_URL || '';
+const API_ORIGIN        = RAW_API_BASE.replace(/\/+$/, '').replace(/\/api$/, '');
 const VIETMAP_PROXY_BASE = `${API_ORIGIN}/api/vietmap`;
 
 const VIETMAP_API_KEY      = import.meta.env.VITE_VIETMAP_API_KEY      || '';
-const VIETMAP_TILE_API_KEY = import.meta.env.VIETMAP_TILE_API_KEY     || '';
+const VIETMAP_TILE_API_KEY = import.meta.env.VITE_VIETMAP_TILE_API_KEY || '';
 const VIETMAP_STYLE_URL    = import.meta.env.VITE_VIETMAP_STYLE       || '';
 const USE_VIETMAP          = import.meta.env.VITE_USE_VIETMAP_TILES === 'true';
 
-// OpenFreeMap: free, no API key, hỗ trợ name:latin + name:nonlatin (Tiếng Việt có dấu).
 const OPENFREEMAP_LIBERTY = 'https://tiles.openfreemap.org/styles/liberty';
-const OPENFREEMAP_POSITRON = 'https://tiles.openfreemap.org/styles/positron';
-const OPENFREEMAP_BRIGHT  = 'https://tiles.openfreemap.org/styles/bright';
 
 let RESOLVED_STYLE_URL;
 if (import.meta.env.VITE_MAP_STYLE_URL) {
   RESOLVED_STYLE_URL = import.meta.env.VITE_MAP_STYLE_URL;
 } else if (USE_VIETMAP && VIETMAP_TILE_API_KEY) {
-  // Browser → Vietmap CDN trực tiếp (CORS *, browser IP OK, dùng TILE KEY).
-  // Style URL có sẵn thì dùng, ngược lại dùng Vietmap tm style.
   RESOLVED_STYLE_URL = VIETMAP_STYLE_URL
     ? `${VIETMAP_STYLE_URL}${VIETMAP_STYLE_URL.includes('?') ? '&' : '?'}apikey=${encodeURIComponent(VIETMAP_TILE_API_KEY)}`
     : `https://maps.vietmap.vn/maps/styles/tm/style.json?apikey=${encodeURIComponent(VIETMAP_TILE_API_KEY)}`;
 } else {
-  // Default fallback: OpenFreeMap Liberty (miễn phí, luôn work, không cần key).
   if (USE_VIETMAP && !VIETMAP_TILE_API_KEY) {
     // eslint-disable-next-line no-console
     console.info('[VietmapMap] TILE_KEY chưa set — đang dùng OpenFreeMap. Set VITE_VIETMAP_TILE_API_KEY trên Vercel để dùng tile Vietmap.');
@@ -72,7 +61,6 @@ if (import.meta.env.VITE_MAP_STYLE_URL) {
   RESOLVED_STYLE_URL = OPENFREEMAP_LIBERTY;
 }
 
-// Log 1 dòng duy nhất: tổng kết env + style URL đang dùng.
 // eslint-disable-next-line no-console
 console.info(
   '[VietmapMap] config →',
@@ -90,7 +78,6 @@ function loadVietmap() {
   if (vietmapLoading) return vietmapLoading;
 
   vietmapLoading = new Promise((resolve, reject) => {
-    // CSS
     if (!document.querySelector(`link[href="${VIETMAP_CSS}"]`)) {
       const link = document.createElement('link');
       link.rel = 'stylesheet';
@@ -98,7 +85,6 @@ function loadVietmap() {
       document.head.appendChild(link);
     }
 
-    // JS — skip nếu đã inject
     const existing = document.querySelector('script[data-vietmap-gl]');
     if (existing) {
       if (window[VIETMAP_GLOBAL]) resolve(window[VIETMAP_GLOBAL]);
@@ -124,18 +110,188 @@ function loadVietmap() {
 
 export default function VietmapMap({
   points = [],
-  center = { lat: 10.762622, lng: 106.660172 }, // Ho Chi Minh City default
+  center = { lat: 10.762622, lng: 106.660172 },
   zoom = 11,
   height = '500px',
   onPointClick,
   fitBounds = true,
   draggable = false,
   onLocationChange,
+  // Phase 3: Route Line
+  routeGeometry = null,
+  routeColor = '#2563EB',
+  routeWidth = 3,
+  routeOpacity = 0.8,
+  // Phase 4: Popup assign
+  selectedPoint = null,
+  onAssignRequest,
+  tripOptions = [],
+  selectedTripIdForAssign = '',
+  onSelectTripForAssign,
+  onConfirmAssign,
+  assignLoading = false,
+  // Phase 6: Callback khi map ready (dùng cho AuditMap thêm layers tùy chỉnh)
+  onMapReady,
 }) {
-  const containerRef = useRef(null);
+  const containerRef  = useRef(null);
   const mapRef       = useRef(null);
+  const markersRef   = React.useRef(new Map());     // id → Marker
+  const popupRef     = useRef(null);              // Vietmap Popup instance
+  const initFlag     = React.useRef(false);
 
-  // ── Mount: load Vietmap + init map ────────────────────────────────────
+  // ── Phase 3: Route line management ────────────────────────────────
+  function updateRouteLayer(map, vietmap) {
+    if (!map || !vietmap) return;
+    const SOURCE = 'planned-route';
+    const LAYER  = 'planned-route-layer';
+    const POPUP_LAYER = 'planned-route-labels';
+
+    if (!routeGeometry || routeGeometry.type !== 'LineString' || !routeGeometry.coordinates?.length) {
+      // Remove route
+      if (map.getLayer(POPUP_LAYER)) map.removeLayer(POPUP_LAYER);
+      if (map.getLayer(LAYER))      map.removeLayer(LAYER);
+      if (map.getSource(SOURCE))     map.removeSource(SOURCE);
+      return;
+    }
+
+    const geojson = {
+      type: 'Feature',
+      geometry: routeGeometry,
+      properties: {},
+    };
+
+    if (map.getSource(SOURCE)) {
+      map.getSource(SOURCE).setData(geojson);
+    } else {
+      map.addSource(SOURCE, { type: 'geojson', data: geojson });
+
+      // Main line
+      map.addLayer({
+        id: LAYER,
+        type: 'line',
+        source: SOURCE,
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: {
+          'line-color': routeColor,
+          'line-width': routeWidth,
+          'line-opacity': routeOpacity,
+        },
+      });
+
+      // Subtle dashed outline for contrast
+      map.addLayer({
+        id: LAYER + '-outline',
+        type: 'line',
+        source: SOURCE,
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: {
+          'line-color': '#ffffff',
+          'line-width': routeWidth + 4,
+          'line-opacity': 0.3,
+        },
+      }, LAYER);
+    }
+
+    // Update existing layer paint (color/width may have changed)
+    if (map.getLayer(LAYER)) {
+      map.setPaintProperty(LAYER, 'line-color', routeColor);
+      map.setPaintProperty(LAYER, 'line-width', routeWidth);
+      map.setPaintProperty(LAYER, 'line-opacity', routeOpacity);
+    }
+  }
+
+  // ── Phase 4: Popup management ──────────────────────────────────────
+  function closePopup() {
+    if (popupRef.current) {
+      try { popupRef.current.remove(); } catch (_) { /* ignore */ }
+      popupRef.current = null;
+    }
+  }
+
+  function buildPopupHTML(point, tripOpts, selectedTrip, onSelect, onConfirm, loading) {
+    const partner = point.metadata || {};
+    const weight  = partner.total_weight
+      ? `${Number(partner.total_weight).toLocaleString('vi-VN')} kg`
+      : '—';
+    const stopNum = partner.stop_order ? `Số thứ tự: ${partner.stop_order}` : '';
+    const currentTrip = partner.trip_id
+      ? `<span style="color:#2563EB">✓ Thuộc chuyến #${partner.trip_id}</span>`
+      : '<span style="color:#6B7280">Chưa gán chuyến</span>';
+
+    const tripOptionsHTML = tripOpts
+      .map(t => `<option value="${t.trip_id}" ${String(selectedTrip) === String(t.trip_id) ? 'selected' : ''}>${t.trip_number}</option>`)
+      .join('');
+
+    return `
+      <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;min-width:240px;max-width:300px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <strong style="font-size:14px;color:#111827;">${point.label || 'Khách hàng'}</strong>
+          <button id="vietmap-popup-close" style="background:none;border:none;cursor:pointer;font-size:16px;padding:0;line-height:1;color:#6B7280;">✕</button>
+        </div>
+        <div style="font-size:12px;color:#374151;margin-bottom:4px;">
+          <div>📦 Khối lượng: <strong>${weight}</strong></div>
+          ${stopNum ? `<div style="margin-top:2px;">🔢 ${stopNum}</div>` : ''}
+          <div style="margin-top:4px;">${currentTrip}</div>
+        </div>
+        <div style="margin-top:10px;padding-top:8px;border-top:1px solid #E5E7EB;">
+          <label style="font-size:12px;font-weight:600;color:#374151;">Chuyến xe:</label>
+          <select id="vietmap-popup-trip-select"
+            style="width:100%;margin-top:4px;padding:4px 8px;border:1px solid #D1D5DB;border-radius:4px;font-size:13px;box-sizing:border-box;">
+            <option value="">— Chọn chuyến —</option>
+            ${tripOptionsHTML}
+          </select>
+          <button id="vietmap-popup-assign-btn"
+            style="width:100%;margin-top:6px;padding:6px 12px;background:#2563EB;color:#fff;border:none;border-radius:4px;
+                   font-size:13px;cursor:pointer;font-weight:600;"
+            ${!selectedTrip || loading ? 'disabled style="background:#93C5FD;cursor:not-allowed;"' : ''}>
+            ${loading ? '⏳ Đang gán...' : '✅ Gán vào chuyến'}
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  function showPopup(point, tripOpts, selectedTrip, onSelect, onConfirm, loading) {
+    const map = mapRef.current;
+    if (!map || !window[VIETMAP_GLOBAL]) return;
+
+    closePopup();
+
+    const vietmap = window[VIETMAP_GLOBAL];
+    const html = buildPopupHTML(point, tripOpts, selectedTrip, onSelect, onConfirm, loading);
+
+    popupRef.current = new vietmap.Popup({
+      closeOnClick: false,
+      offset: 25,
+      maxWidth: '320px',
+      className: 'vietmap-custom-popup',
+    })
+      .setLngLat([point.lng, point.lat])
+      .setHTML(html)
+      .addTo(map);
+
+    // Bind event handlers after popup renders
+    popupRef.current.on('open', () => {
+      const closeBtn = document.getElementById('vietmap-popup-close');
+      if (closeBtn) closeBtn.addEventListener('click', closePopup);
+
+      const selectEl = document.getElementById('vietmap-popup-trip-select');
+      if (selectEl) {
+        selectEl.addEventListener('change', (e) => {
+          onSelect(e.target.value);
+        });
+      }
+
+      const assignBtn = document.getElementById('vietmap-popup-assign-btn');
+      if (assignBtn && !loading) {
+        assignBtn.addEventListener('click', () => {
+          onConfirm();
+        });
+      }
+    });
+  }
+
+  // ── Mount: load Vietmap + init map ────────────────────────────────
   useEffect(() => {
     let cancelled = false;
 
@@ -147,32 +303,17 @@ export default function VietmapMap({
         style:     RESOLVED_STYLE_URL,
         center:    [center.lng, center.lat],
         zoom,
-        // QUAN TRỌNG: nếu tile key đã set, để browser gọi THẲNG tới maps.vietmap.vn
-        // (CORS *, browser IP OK). Proxy chỉ dùng khi KHÔNG có tile key
-        // (vì lúc đó tile key không có trong style.json → render IP bị chặn 403).
-        transformRequest: (url, resourceType) => {
+        transformRequest: (url) => {
           if (typeof url !== 'string') return { url };
-
-          // Đã đi qua proxy → pass-through
-          if (url.startsWith(VIETMAP_PROXY_BASE)) {
-            return { url };
-          }
-
-          // Nếu không dùng Vietmap tile, hoặc đã có tile key, để browser gọi thẳng
-          // (Vietmap CDN CORS open, không cần proxy khi có key)
+          if (url.startsWith(VIETMAP_PROXY_BASE)) return { url };
           if (!USE_VIETMAP || VIETMAP_TILE_API_KEY || !url.includes('maps.vietmap.vn')) {
             return { url };
           }
-
-          // Fallback: proxy qua backend (chỉ khi USE_VIETMAP=true mà KHÔNG có tile key)
           let u = url;
           if (!/[?&]apikey=[^&]+/.test(u) && !/[?&]api[-_]key=[^&]+/i.test(u)) {
             u += (u.includes('?') ? '&' : '?') + 'apikey=' + encodeURIComponent(VIETMAP_API_KEY);
           }
-          const proxied = u.replace(
-            'https://maps.vietmap.vn',
-            VIETMAP_PROXY_BASE,
-          );
+          const proxied = u.replace('https://maps.vietmap.vn', VIETMAP_PROXY_BASE);
           return { url: proxied, credentials: 'omit' };
         },
       });
@@ -182,11 +323,14 @@ export default function VietmapMap({
       map.on('load', () => {
         if (cancelled) return;
         renderMarkers(map, vietmap);
+        updateRouteLayer(map, vietmap);
         const validPoints = points.filter(p => typeof p.lat === 'number' && typeof p.lng === 'number');
         if (fitBounds && validPoints.length > 1 && !initFlag.current) {
           initFlag.current = true;
           fitMapToPoints(map, validPoints);
         }
+        // Notify parent (AuditMap) that map is ready so it can add custom layers
+        if (onMapReady) onMapReady(map);
       });
 
       mapRef.current = map;
@@ -196,43 +340,119 @@ export default function VietmapMap({
 
     return () => {
       cancelled = true;
+      closePopup();
       if (mapRef.current) {
         try { mapRef.current.remove(); } catch (_) { /* ignore */ }
         mapRef.current = null;
       }
-      // Reset markers map khi map bị unmount (React Strict Mode hoặc re-mount)
       markersRef.current = new Map();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Re-render markers khi points đổi ─────────────────────────────────
-  // Dùng initFlag để fitBounds CHỈ chạy 1 lần duy nhất khi map khởi tạo.
-  // Sau đó points có thay đổi (drag, re-color) thì KHÔNG fit lại → giữ nguyên viewport.
-  // Markers map: { id → Marker instance } để update differential (không remove all/add all).
-  const markersRef = React.useRef(new Map());     // id -> Marker
-  const initFlag = React.useRef(false);
+  // ── Re-render markers khi points đổi ─────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
     loadVietmap().then((vietmap) => {
       if (!vietmap || !mapRef.current) return;
-      diffUpdateMarkers(mapRef.current, vietmap);
-      if (fitBounds && points.length > 1 && !initFlag.current) {
-        initFlag.current = true;
-        const valid = points.filter(p => typeof p.lat === 'number' && typeof p.lng === 'number');
-        if (valid.length > 1) fitMapToPoints(mapRef.current, valid);
-      }
+      renderMarkers(mapRef.current, vietmap);
+      // fitBounds chỉ chạy lần đầu
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [points]);
 
-  function diffUpdateMarkers(map, vietmap) {
+  // ── Phase 3: Update route layer khi geometry đổi ─────────────────
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    loadVietmap().then((vietmap) => {
+      if (!vietmap) return;
+      updateRouteLayer(map, vietmap);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeGeometry, routeColor, routeWidth]);
+
+  // ── Phase 4: Update popup khi selectedPoint/tripOptions đổi ──────
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    loadVietmap().then((vietmap) => {
+      if (!vietmap) return;
+      if (selectedPoint) {
+        showPopup(
+          selectedPoint,
+          tripOptions,
+          selectedTripIdForAssign,
+          (tripId) => { if (onSelectTripForAssign) onSelectTripForAssign(tripId); },
+          () => { if (onConfirmAssign) onConfirmAssign(); },
+          assignLoading,
+        );
+      } else {
+        closePopup();
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPoint, tripOptions, selectedTripIdForAssign, assignLoading]);
+
+  // ── Phase 5: Data-rich marker HTML ─────────────────────────────────
+  function buildMarkerElement(point) {
+    const el = document.createElement('div');
+    el.className = 'vietmap-pin';
+
+    const isAssigned  = !!(point.metadata?.trip_id);
+    const stopOrder  = point.metadata?.stop_order;
+    const weight     = point.metadata?.total_weight;
+    const baseColor  = point.color || '#3B82F6';
+
+    if (isAssigned && stopOrder) {
+      // Pin đã gán: hiện số stop_order, kích thước cố định 34px
+      el.style.cssText = `
+        width: 34px; height: 34px;
+        background: ${baseColor};
+        border: 2.5px solid #fff;
+        border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 13px; font-weight: 700; color: #fff;
+        box-shadow: 0 3px 10px rgba(0,0,0,0.35);
+        cursor: pointer;
+      `;
+      el.textContent = stopOrder;
+      el.title = `${point.label || ''} — Stop #${stopOrder}`;
+    } else {
+      // Pin chưa gán: scale theo weight
+      let size = 20;
+      let weightLabel = '';
+      if (typeof weight === 'number' && weight > 0) {
+        if (weight >= 500)      size = 36;
+        else if (weight >= 200) size = 30;
+        else if (weight >= 100) size = 24;
+        weightLabel = weight >= 500 ? '📦' : weight >= 200 ? '📦' : '';
+      }
+      el.style.cssText = `
+        width: ${size}px; height: ${size}px;
+        background: #9CA3AF;
+        border: 2px solid #fff;
+        border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-size: ${Math.max(10, size * 0.4)}px;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+        cursor: pointer;
+      `;
+      el.textContent = weightLabel || '🏪';
+      el.title = point.label || '';
+    }
+
+    return el;
+  }
+
+  // ── Marker rendering (differential update) ─────────────────────────
+  function renderMarkers(map, vietmap) {
     const valid = points.filter(p => typeof p.lat === 'number' && typeof p.lng === 'number');
     const newIds = new Set(valid.map(p => p.id));
     const map_ = markersRef.current;
 
-    // 1. Xoá markers không còn trong points
+    // Remove markers not in points
     for (const [id, marker] of map_.entries()) {
       if (!newIds.has(id)) {
         try { marker.remove(); } catch (_) { /* ignore */ }
@@ -240,38 +460,19 @@ export default function VietmapMap({
       }
     }
 
-    // 2. Update hoặc thêm mới
+    // Update or create markers
     valid.forEach(p => {
       const existing = map_.get(p.id);
       if (existing) {
-        // Update toạ độ + style (chỉ khi thật sự đổi)
         const ll = existing.getLngLat();
-        if (Math.abs(ll.lat - p.lat) > 1e-7 || Math.abs(ll.lng - p.lng) > 1e-7) {
-          existing.setLngLat([p.lng, p.lat]);
-        }
-        // Cập nhật màu nếu đổi
-        const el = existing.getElement();
-        const expectedBg = p.color || '#2563EB';
-        if (el && el.style.background !== expectedBg) {
-          el.style.background = expectedBg;
-        }
+        const posChanged = Math.abs(ll.lat - p.lat) > 1e-7 || Math.abs(ll.lng - p.lng) > 1e-7;
+        if (posChanged) existing.setLngLat([p.lng, p.lat]);
+        // Rebuild element to update visual (stop_order, color, size)
+        const newEl = buildMarkerElement(p);
+        existing.getElement().replaceWith(newEl);
+        existing.getElement = () => newEl; // Marker.getElement() returns same element
       } else {
-        // Tạo marker mới
-        const el = document.createElement('div');
-        el.className = 'vietmap-pin';
-        el.style.cssText = `
-          width: 24px; height: 24px;
-          background: ${p.color || '#2563EB'};
-          border: 2px solid #fff;
-          border-radius: 50%;
-          box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-          cursor: ${draggable ? 'grab' : 'pointer'};
-          display: flex; align-items: center; justify-content: center;
-          font-size: 11px; font-weight: 700; color: #fff;
-        `;
-        el.title = p.label || '';
-        el.textContent = p.icon || '';
-
+        const el = buildMarkerElement(p);
         const marker = new vietmap.Marker({ element: el, draggable })
           .setLngLat([p.lng, p.lat])
           .addTo(map);
@@ -293,11 +494,6 @@ export default function VietmapMap({
         map_.set(p.id, marker);
       }
     });
-  }
-
-  function renderMarkers(map, vietmap) {
-    // Giữ cho back-compat (gọi lần đầu từ map.on('load'))
-    diffUpdateMarkers(map, vietmap);
   }
 
   function fitMapToPoints(map, pts) {
