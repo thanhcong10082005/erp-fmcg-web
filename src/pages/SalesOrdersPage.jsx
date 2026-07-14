@@ -22,6 +22,22 @@ export default function SalesOrdersPage({ token }) {
     const [productSearch, setProductSearch] = useState('');
     // Per-row product search state: productSearchIdx[idx] = search string for row idx
     const [productSearchIdx, setProductSearchIdx] = useState({});
+    // Track which product dropdown is open (idx or null)
+    const [openProductDropdown, setOpenProductDropdown] = useState(null);
+    // Store selected partner display string (survives partners array clear)
+    const [selectedPartnerDisplay, setSelectedPartnerDisplay] = useState('');
+
+    // Close product dropdowns when clicking outside the form
+    useEffect(() => {
+        if (!showForm) return;
+        const handleClick = (e) => {
+            if (!e.target.closest('.order-form-body')) {
+                setOpenProductDropdown(null);
+            }
+        };
+        document.addEventListener('mousedown', handleClick);
+        return () => document.removeEventListener('mousedown', handleClick);
+    }, [showForm]);
     const [form, setForm] = useState({
         partner_id: '', warehouse_id: 1,
         expected_date: '', notes: '',
@@ -72,6 +88,8 @@ export default function SalesOrdersPage({ token }) {
         setFormErr('');
         setPartnerSearch(''); setProductSearch('');
         setProductSearchIdx({});
+        setOpenProductDropdown(null);
+        setSelectedPartnerDisplay('');
         await Promise.all([loadWarehouses(), loadProducts()]);
         await loadPartners();
         setShowForm(true);
@@ -311,47 +329,76 @@ export default function SalesOrdersPage({ token }) {
                             <button className="btn btn-outline btn-sm" onClick={() => setShowForm(false)}>✕ Đóng</button>
                         </div>
 
-                        <form onSubmit={handleSubmitOrder} style={{ padding: 24 }}>
+                        <form onSubmit={handleSubmitOrder} className="order-form-body" style={{ padding: 24 }}>
                             {formErr && <div className="alert alert-error" style={{ marginBottom: 16 }}>{formErr}</div>}
 
                             {/* Header row */}
                             <div className="grid-3" style={{ marginBottom: 20 }}>
-                                {/* ── Khách hàng: search + dropdown + geo badge ── */}
+                                {/* ── Khách hàng: search + custom dropdown + geo badge ── */}
                                 <div className="form-group">
                                     <label>Khách hàng *</label>
-                                    <div style={{ position: 'relative' }}>
+                                    <div className="order-form-body" style={{ position: 'relative' }}>
                                         <input
                                             type="text"
-                                            value={partnerSearch}
+                                            readOnly
+                                            value={
+                                                form.partner_id
+                                                    ? selectedPartnerDisplay
+                                                    : partnerSearch
+                                            }
                                             placeholder="🔎 Tìm mã / tên ASO..."
-                                            onChange={e => { setPartnerSearch(e.target.value); loadPartners(); }}
-                                            style={{ width: '100%', padding: '6px 10px', fontSize: '0.85rem' }}
+                                            onChange={e => {
+                                                setPartnerSearch(e.target.value);
+                                                if (form.partner_id) {
+                                                    setForm(f => ({ ...f, partner_id: '' }));
+                                                    setSelectedPartnerDisplay('');
+                                                }
+                                                loadPartners();
+                                            }}
+                                            onFocus={() => {
+                                                if (partners.length === 0) loadPartners();
+                                            }}
+                                            style={{ width: '100%', padding: '6px 10px', fontSize: '0.85rem', cursor: 'pointer', background: '#fff' }}
                                         />
                                         {/* Dropdown */}
                                         {partners.length > 0 && (
-                                            <select
-                                                size={Math.min(partners.length, 8)}
-                                                value={form.partner_id}
-                                                onChange={e => {
-                                                    setForm(f => ({ ...f, partner_id: e.target.value }));
-                                                    setPartnerSearch('');
-                                                    setPartners([]);
-                                                }}
-                                                style={{
-                                                    position: 'absolute', top: '100%', left: 0, right: 0,
-                                                    zIndex: 10, background: '#fff',
-                                                    border: '1px solid #D1D5DB', borderRadius: 4,
-                                                    maxHeight: 240, overflowY: 'auto', fontSize: '0.82rem',
-                                                    boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
-                                                }}
-                                            >
+                                            <div style={{
+                                                position: 'absolute', top: '100%', left: 0, right: 0,
+                                                zIndex: 100, background: '#fff',
+                                                border: '1px solid #D1D5DB', borderRadius: 4,
+                                                maxHeight: 280, overflowY: 'auto',
+                                                boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
+                                            }}>
                                                 {partners.map(p => (
-                                                    <option key={p.partner_id} value={p.partner_id}>
-                                                        {p.partner_code} — {p.partner_name} ({p.partner_type})
-                                                        {p.geocoding_confidence === 'HIGH' || p.geocoding_confidence === 'MANUAL' ? ' ✅' : p.geocoding_confidence === 'MEDIUM' ? ' ○' : p.geocoding_confidence === 'LOW' ? ' ⚠️' : ' ❌'}
-                                                    </option>
+                                                    <div
+                                                        key={p.partner_id}
+                                                        onClick={() => {
+                                                            setForm(f => ({ ...f, partner_id: p.partner_id }));
+                                                            setSelectedPartnerDisplay(`${p.partner_code} — ${p.partner_name} (${p.partner_type})`);
+                                                            setPartnerSearch('');
+                                                            setPartners([]);
+                                                        }}
+                                                        style={{
+                                                            padding: '7px 12px', cursor: 'pointer',
+                                                            borderBottom: '1px solid #F3F4F6',
+                                                            fontSize: '0.82rem',
+                                                            background: String(form.partner_id) === String(p.partner_id) ? '#EFF6FF' : 'transparent',
+                                                        }}
+                                                        onMouseEnter={e => { if (String(form.partner_id) !== String(p.partner_id)) e.currentTarget.style.background = '#F9FAFB'; }}
+                                                        onMouseLeave={e => { if (String(form.partner_id) !== String(p.partner_id)) e.currentTarget.style.background = 'transparent'; }}
+                                                    >
+                                                        <div style={{ fontWeight: 600 }}>{p.partner_code} — {p.partner_name}</div>
+                                                        <div style={{ color: '#6B7280', fontSize: '0.75rem', marginTop: 1 }}>
+                                                            {p.partner_type}
+                                                            {' '}
+                                                            {p.geocoding_confidence === 'HIGH' || p.geocoding_confidence === 'MANUAL' ? '✅ Tọa độ tốt'
+                                                                : p.geocoding_confidence === 'MEDIUM' ? '○ TB'
+                                                                : p.geocoding_confidence === 'LOW' ? '⚠️ Yếu'
+                                                                : '❌ Chưa có tọa độ'}
+                                                        </div>
+                                                    </div>
                                                 ))}
-                                            </select>
+                                            </div>
                                         )}
                                     </div>
                                     {form.partner_id && (() => {
@@ -430,61 +477,79 @@ export default function SalesOrdersPage({ token }) {
                                                     <td style={{ padding: '6px 8px', color: '#6B7280' }}>{idx + 1}</td>
                                                     <td style={{ padding: '4px 4px' }}>
                                                         <div style={{ position: 'relative' }}>
-                                                            <input
-                                                                type="text"
-                                                                value={productSearchIdx[idx] || ''}
-                                                                placeholder="Tìm SKU / tên SP..."
-                                                                onChange={e => {
-                                                                    const val = e.target.value;
-                                                                    setProductSearchIdx(prev => ({ ...prev, [idx]: val }));
-                                                                }}
-                                                                onFocus={() => {
+                                                            {/* Show selected product name or search input */}
+                                                            <div
+                                                                onClick={() => {
+                                                                    const isOpen = openProductDropdown === idx;
+                                                                    setOpenProductDropdown(isOpen ? null : idx);
                                                                     if (products.length === 0) loadProducts();
                                                                 }}
-                                                                style={{ width: '100%', padding: '4px 6px', fontSize: '0.82rem', marginBottom: 2 }}
-                                                            />
-                                                            <select
-                                                                size={Math.min(
-                                                                    products.filter(p => {
-                                                                        const q = (productSearchIdx[idx] || '').toLowerCase();
-                                                                        if (!q) return true;
-                                                                        return (p.sku || '').toLowerCase().includes(q) ||
-                                                                            (p.product_name || '').toLowerCase().includes(q);
-                                                                    }).length,
-                                                                    6
-                                                                )}
-                                                                value={it.product_id}
-                                                                onChange={e => {
-                                                                    handleProductSelect(idx, e.target.value);
-                                                                    setProductSearchIdx(prev => ({ ...prev, [idx]: '' }));
-                                                                }}
                                                                 style={{
-                                                                    position: 'absolute', top: '100%', left: 0, right: 0,
-                                                                    zIndex: 10, background: '#fff',
+                                                                    width: '100%', padding: '4px 8px', fontSize: '0.82rem',
                                                                     border: '1px solid #D1D5DB', borderRadius: 4,
-                                                                    maxHeight: 180, overflowY: 'auto', fontSize: '0.80rem',
-                                                                    boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
+                                                                    cursor: 'pointer', background: '#fff',
+                                                                    minHeight: 30, display: 'flex', alignItems: 'center',
+                                                                    color: selectedProduct ? '#111827' : '#9CA3AF',
+                                                                    userSelect: 'none',
                                                                 }}
                                                             >
-                                                                {products
-                                                                    .filter(p => {
-                                                                        const q = (productSearchIdx[idx] || '').toLowerCase();
-                                                                        if (!q) return true;
-                                                                        return (p.sku || '').toLowerCase().includes(q) ||
-                                                                            (p.product_name || '').toLowerCase().includes(q);
-                                                                    })
-                                                                    .map(p => (
-                                                                        <option key={p.product_id} value={p.product_id}>
-                                                                            {p.sku} — {p.product_name} ({fmt.vnd(p.selling_price)})
-                                                                        </option>
-                                                                    ))}
-                                                            </select>
-                                                        </div>
-                                                        {selectedProduct && (
-                                                            <div style={{ fontSize: '0.72rem', color: '#10B981', marginTop: 2, paddingLeft: 4 }}>
-                                                                ✓ {selectedProduct.product_name}
+                                                                {selectedProduct
+                                                                    ? <span><span style={{ color: '#059669', marginRight: 4 }}>✓</span>{selectedProduct.sku} — {selectedProduct.product_name}</span>
+                                                                    : <span>🔎 Tìm SKU / tên SP...</span>
+                                                                }
                                                             </div>
-                                                        )}
+                                                            {/* Dropdown */}
+                                                            {openProductDropdown === idx && (
+                                                                <div style={{
+                                                                    position: 'absolute', top: '100%', left: 0, right: 0,
+                                                                    zIndex: 200, background: '#fff',
+                                                                    border: '1px solid #D1D5DB', borderRadius: 4,
+                                                                    boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
+                                                                    maxHeight: 240, overflowY: 'auto',
+                                                                }}>
+                                                                    {/* Inline search inside dropdown */}
+                                                                    <div style={{ padding: '4px 6px', borderBottom: '1px solid #E5E7EB', position: 'sticky', top: 0, background: '#fff', zIndex: 1 }}>
+                                                                        <input
+                                                                            autoFocus
+                                                                            type="text"
+                                                                            value={productSearchIdx[idx] || ''}
+                                                                            placeholder="Tìm..."
+                                                                            onChange={e => setProductSearchIdx(prev => ({ ...prev, [idx]: e.target.value }))}
+                                                                            style={{ width: '100%', padding: '3px 6px', fontSize: '0.80rem', border: '1px solid #E5E7EB', borderRadius: 3 }}
+                                                                        />
+                                                                    </div>
+                                                                    {products
+                                                                        .filter(p => {
+                                                                            const q = (productSearchIdx[idx] || '').toLowerCase();
+                                                                            if (!q) return true;
+                                                                            return (p.sku || '').toLowerCase().includes(q) ||
+                                                                                (p.product_name || '').toLowerCase().includes(q);
+                                                                        })
+                                                                        .map(p => (
+                                                                            <div
+                                                                                key={p.product_id}
+                                                                                onClick={() => {
+                                                                                    handleProductSelect(idx, p.product_id);
+                                                                                    setProductSearchIdx(prev => ({ ...prev, [idx]: '' }));
+                                                                                    setOpenProductDropdown(null);
+                                                                                }}
+                                                                                style={{
+                                                                                    padding: '6px 10px', cursor: 'pointer',
+                                                                                    borderBottom: '1px solid #F3F4F6',
+                                                                                    fontSize: '0.80rem',
+                                                                                    background: String(it.product_id) === String(p.product_id) ? '#EFF6FF' : 'transparent',
+                                                                                }}
+                                                                                onMouseEnter={e => { if (String(it.product_id) !== String(p.product_id)) e.currentTarget.style.background = '#F9FAFB'; }}
+                                                                                onMouseLeave={e => { if (String(it.product_id) !== String(p.product_id)) e.currentTarget.style.background = 'transparent'; }}
+                                                                            >
+                                                                                <div style={{ fontWeight: 600 }}>{p.sku}</div>
+                                                                                <div style={{ color: '#374151' }}>{p.product_name}</div>
+                                                                                <div style={{ color: '#059669', fontSize: '0.75rem' }}>{fmt.vnd(p.selling_price)}</div>
+                                                                            </div>
+                                                                        ))}
+                                                                </div>
+                                                            )}
+                                                        </div>
                                                     </td>
                                                     <td style={{ padding: '4px 4px' }}>
                                                         <input type="number" value={it.quantity} min="0" step="1"

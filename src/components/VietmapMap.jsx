@@ -294,8 +294,10 @@ export default function VietmapMap({
   // ── Mount: load Vietmap + init map ────────────────────────────────
   useEffect(() => {
     let cancelled = false;
+    let retryCount = 0;
+    const MAX_RETRIES = 2;
 
-    loadVietmap().then((vietmap) => {
+    function tryInit(vietmap) {
       if (cancelled || !containerRef.current || mapRef.current) return;
 
       const map = new vietmap.Map({
@@ -320,8 +322,10 @@ export default function VietmapMap({
 
       map.addControl(new vietmap.NavigationControl(), 'top-right');
 
-      map.on('load', () => {
+      // Use 'idle' instead of 'load' so markers render even if style tiles fail
+      map.on('idle', () => {
         if (cancelled) return;
+        mapRef.current = map;
         renderMarkers(map, vietmap);
         updateRouteLayer(map, vietmap);
         const validPoints = points.filter(p => typeof p.lat === 'number' && typeof p.lng === 'number');
@@ -329,12 +333,32 @@ export default function VietmapMap({
           initFlag.current = true;
           fitMapToPoints(map, validPoints);
         }
-        // Notify parent (AuditMap) that map is ready so it can add custom layers
         if (onMapReady) onMapReady(map);
       });
 
-      mapRef.current = map;
-    }).catch((err) => {
+      map.on('error', (e) => {
+        // Only retry on tile/resource errors (not style parse errors)
+        if (cancelled || retryCount >= MAX_RETRIES) return;
+        const errId = e?.error?.id || '';
+        if (errId === 'http' || errId === 'tiles' || errId === 'socket' || errId === 'webgl') {
+          retryCount++;
+          // eslint-disable-next-line no-console
+          console.warn(`[VietmapMap] Tile/resource error — retry ${retryCount}/${MAX_RETRIES}:`, errId);
+          setTimeout(() => {
+            if (!cancelled && mapRef.current) {
+              try { mapRef.current.remove(); } catch (_) { /* ignore */ }
+              mapRef.current = null;
+              markersRef.current = new Map();
+              loadVietmap().then(tryInit).catch((err2) => {
+                console.error('[VietmapMap] retry failed:', err2);
+              });
+            }
+          }, 1500);
+        }
+      });
+    }
+
+    loadVietmap().then(tryInit).catch((err) => {
       console.error('[VietmapMap] load failed:', err);
     });
 
@@ -353,11 +377,10 @@ export default function VietmapMap({
   // ── Re-render markers khi points đổi ─────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
+    if (!map || map.loaded?.() === false) return;
     loadVietmap().then((vietmap) => {
       if (!vietmap || !mapRef.current) return;
       renderMarkers(mapRef.current, vietmap);
-      // fitBounds chỉ chạy lần đầu
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [points]);
