@@ -137,11 +137,15 @@ export default function VietmapMap({
 }) {
   const containerRef  = useRef(null);
   const mapRef       = useRef(null);
-  const markersRef   = React.useRef(new Map());     // id → Marker
+  const markersRef   = React.useRef(new Map());     // id → Marker (legacy, kept for back-compat)
   const popupRef     = useRef(null);              // Vietmap Popup instance
   const initFlag     = React.useRef(false);
   // Track previous forceRender to detect changes
   const prevForceRef = React.useRef(forceRender);
+  // Source/layer IDs for GeoJSON-based pins
+  const SOURCE_ID    = 'vietmap-pins';
+  const CIRCLE_LAYER = 'vietmap-pins-circle';
+  const SYMBOL_LAYER = 'vietmap-pins-symbol';
 
   // ── Phase 3: Route line management ────────────────────────────────
   function updateRouteLayer(map, vietmap) {
@@ -401,9 +405,9 @@ export default function VietmapMap({
     loadVietmap().then((vietmap) => {
       if (!vietmap || !mapRef.current) return;
       try {
-        // Clear old markers and re-render
+        // Reset tracked markers + re-render (GeoJSON layer is recreated inside renderMarkers if missing)
         for (const [, marker] of markersRef.current.entries()) {
-          try { marker.remove(); } catch (_) { /* ignore */ }
+          try { marker.remove?.(); } catch (_) { /* ignore */ }
         }
         markersRef.current = new Map();
         renderMarkers(mapRef.current, vietmap);
@@ -447,139 +451,121 @@ export default function VietmapMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPoint, tripOptions, selectedTripIdForAssign, assignLoading]);
 
-  // ── Phase 5: Data-rich marker HTML ─────────────────────────────────
-  function buildMarkerElement(point) {
-    const el = document.createElement('div');
-    el.className = 'vietmap-pin';
-    el.dataset.color    = baseColor;
-    el.dataset.stopOrder = String(stopOrder ?? '');
-
-    const isAssigned  = !!(point.metadata?.trip_id);
-    const stopOrder  = point.metadata?.stop_order;
-    const weight     = point.metadata?.total_weight;
-    const baseColor  = point.color || '#3B82F6';
-
-    if (isAssigned && stopOrder) {
-      // Pin đã gán: hiện số stop_order, kích thước cố định 34px
-      el.style.cssText = `
-        width: 34px; height: 34px;
-        background: ${baseColor};
-        border: 2.5px solid #fff;
-        border-radius: 50%;
-        display: flex; align-items: center; justify-content: center;
-        font-size: 13px; font-weight: 700; color: #fff;
-        box-shadow: 0 3px 10px rgba(0,0,0,0.35);
-        cursor: pointer;
-      `;
-      el.textContent = stopOrder;
-      el.title = `${point.label || ''} — Stop #${stopOrder}`;
-    } else {
-      // Pin chưa gán: scale theo weight
-      let size = 20;
-      let weightLabel = '';
-      if (typeof weight === 'number' && weight > 0) {
-        if (weight >= 500)      size = 36;
-        else if (weight >= 200) size = 30;
-        else if (weight >= 100) size = 24;
-        weightLabel = weight >= 500 ? '📦' : weight >= 200 ? '📦' : '';
-      }
-      el.style.cssText = `
-        width: ${size}px; height: ${size}px;
-        background: #9CA3AF;
-        border: 2px solid #fff;
-        border-radius: 50%;
-        display: flex; align-items: center; justify-content: center;
-        font-size: ${Math.max(10, size * 0.4)}px;
-        box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-        cursor: pointer;
-      `;
-      el.textContent = weightLabel || '🏪';
-      el.title = point.label || '';
-    }
-
-    return el;
-  }
-
-  // ── Marker rendering (differential update) ─────────────────────────
+  // ── Marker rendering using GeoJSON source (workaround for VietMapGL Marker TDZ bug) ──
   function renderMarkers(map, vietmap) {
+    if (!map || map.isRemoved?.()) return;
     const valid = points.filter(p => typeof p.lat === 'number' && typeof p.lng === 'number');
-    const newIds = new Set(valid.map(p => p.id));
     const map_ = markersRef.current;
 
-    // Remove markers not in points
+    // Remove old markers no longer in points
     for (const [id, marker] of map_.entries()) {
-      if (!newIds.has(id)) {
-        try { marker.remove(); } catch (_) { /* ignore */ }
+      if (!valid.some(p => p.id === id)) {
+        try { marker.remove?.(); } catch (_) { /* ignore */ }
         map_.delete(id);
       }
     }
 
-    // Update or create markers
+    // Build GeoJSON FeatureCollection from valid points
+    const features = valid.map(p => {
+      const tripId  = p.metadata?.trip_id;
+      const stopOrder = p.metadata?.stop_order;
+      const isAssigned = !!tripId;
+      const color = p.color || '#3B82F6';
+      const weight = p.metadata?.total_weight;
+
+      // Determine pin size by weight (mirrors buildMarkerElement)
+      let size = 24;
+      if (typeof weight === 'number' && weight > 0) {
+        if (weight >= 500)      size = 36;
+        else if (weight >= 200) size = 30;
+        else if (weight >= 100) size = 26;
+      }
+      if (isAssigned && stopOrder) size = 34;
+
+      return {
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [p.lng, p.lat] },
+        properties: {
+          id: String(p.id),
+          color,
+          size,
+          label: isAssigned && stopOrder ? String(stopOrder) : (typeof weight === 'number' && weight >= 100 ? '📦' : '🏪'),
+          isAssigned,
+        },
+      };
+    });
+
+    const geojson = { type: 'FeatureCollection', features };
+
+    // Update or create GeoJSON source
+    if (map.getSource(SOURCE_ID)) {
+      try { map.getSource(SOURCE_ID).setData(geojson); } catch (_) { /* ignore */ }
+    } else {
+      try {
+        map.addSource(SOURCE_ID, { type: 'geojson', data: geojson });
+
+        // Circle background (color from properties)
+        map.addLayer({
+          id: CIRCLE_LAYER,
+          type: 'circle',
+          source: SOURCE_ID,
+          paint: {
+            'circle-radius': ['get', 'size'],
+            'circle-color': [
+              'case',
+              ['get', 'isAssigned'], ['get', 'color'],
+              '#9CA3AF' // gray for unassigned
+            ],
+            'circle-stroke-color': '#ffffff',
+            'circle-stroke-width': 2.5,
+          },
+        });
+
+        // Text symbol (stop_order or icon)
+        map.addLayer({
+          id: SYMBOL_LAYER,
+          type: 'symbol',
+          source: SOURCE_ID,
+          layout: {
+            'text-field': ['get', 'label'],
+            'text-size': [
+              'case',
+              ['get', 'isAssigned'], 14,
+              12
+            ],
+            'text-allow-overlap': true,
+            'text-ignore-placement': true,
+          },
+          paint: {
+            'text-color': '#ffffff',
+            'text-halo-color': 'rgba(0,0,0,0.4)',
+            'text-halo-width': 1,
+          },
+        });
+
+        // Click handler on circle layer
+        map.on('click', CIRCLE_LAYER, (e) => {
+          if (!e.features?.length) return;
+          const f = e.features[0];
+          const idStr = f.properties.id;
+          const point = valid.find(p => String(p.id) === idStr);
+          if (point && onPointClick) onPointClick(point);
+        });
+
+        // Hover cursor
+        map.on('mouseenter', CIRCLE_LAYER, () => { map.getCanvas().style.cursor = 'pointer'; });
+        map.on('mouseleave', CIRCLE_LAYER, () => { map.getCanvas().style.cursor = ''; });
+      } catch (err) {
+        console.error('[VietmapMap] Failed to add source/layers:', err);
+        return;
+      }
+    }
+
+    // Update map_ tracking for back-compat (no actual Marker objects stored)
     valid.forEach(p => {
-      const existing = map_.get(p.id);
-      const prevEl   = existing ? existing.getElement() : null;
-      const prevColor = prevEl ? prevEl.dataset.color : undefined;
-      const prevOrder = prevEl ? prevEl.dataset.stopOrder : undefined;
-
-      // Determine if visual properties changed (require element rebuild)
-      const visualChanged =
-        prevColor !== String(p.color || '#3B82F6') ||
-        prevOrder !== String(p.metadata?.stop_order ?? '');
-
-      if (existing) {
-        const ll = existing.getLngLat();
-        const posChanged = Math.abs(ll.lat - p.lat) > 1e-7 || Math.abs(ll.lng - p.lng) > 1e-7;
-
-        if (posChanged) {
-          existing.setLngLat([p.lng, p.lat]);
-        }
-
-        if (visualChanged) {
-          // Remove old marker + element, create fresh one
-          existing.remove();
-          map_.delete(p.id);
-          const el = buildMarkerElement(p);
-          const marker = new vietmap.Marker({ element: el, draggable })
-            .setLngLat([p.lng, p.lat])
-            .addTo(map);
-
-          if (onPointClick) {
-            el.addEventListener('click', (e) => {
-              e.stopPropagation();
-              onPointClick(p);
-            });
-          }
-
-          if (draggable && onLocationChange) {
-            marker.on('dragend', () => {
-              const lngLat = marker.getLngLat();
-              onLocationChange({ ...p, lat: lngLat.lat, lng: lngLat.lng });
-            });
-          }
-
-          map_.set(p.id, marker);
-        }
-      } else {
-        const el = buildMarkerElement(p);
-        const marker = new vietmap.Marker({ element: el, draggable })
-          .setLngLat([p.lng, p.lat])
-          .addTo(map);
-
-        if (onPointClick) {
-          el.addEventListener('click', (e) => {
-            e.stopPropagation();
-            onPointClick(p);
-          });
-        }
-
-        if (draggable && onLocationChange) {
-          marker.on('dragend', () => {
-            const lngLat = marker.getLngLat();
-            onLocationChange({ ...p, lat: lngLat.lat, lng: lngLat.lng });
-          });
-        }
-
-        map_.set(p.id, marker);
+      if (!map_.has(p.id)) {
+        // Stash a tiny placeholder so diff logic above stays correct
+        map_.set(p.id, { remove: () => map_.delete(p.id) });
       }
     });
   }

@@ -446,18 +446,18 @@ export default function SalesOrdersPage({ token }) {
                                     <strong>📦 Sản phẩm ({form.items.length})</strong>
                                     <button type="button" className="btn btn-sm btn-primary" onClick={addItem}>➕ Thêm dòng</button>
                                 </div>
-                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem', tableLayout: 'fixed' }}>
                                     <thead>
                                         <tr style={{ background: '#F3F4F6' }}>
-                                            <th style={{ padding: '6px 8px', textAlign: 'left', width: 40 }}>#</th>
-                                            <th style={{ padding: '6px 8px', textAlign: 'left', minWidth: 200 }}>Sản phẩm *</th>
-                                            <th style={{ padding: '6px 8px', textAlign: 'right', width: 70 }}>SL</th>
-                                            <th style={{ padding: '6px 8px', textAlign: 'left', width: 70 }}>Đơn vị</th>
-                                            <th style={{ padding: '6px 8px', textAlign: 'right', width: 110 }}>Đơn giá</th>
-                                            <th style={{ padding: '6px 8px', textAlign: 'right', width: 60 }}>CK%</th>
-                                            <th style={{ padding: '6px 8px', textAlign: 'left', width: 80 }}>Thuế</th>
-                                            <th style={{ padding: '6px 8px', textAlign: 'right', width: 120 }}>Thành tiền</th>
-                                            <th style={{ padding: '6px 8px', width: 36 }}></th>
+                                            <th style={{ padding: '6px 8px', textAlign: 'left', width: 32 }}>#</th>
+                                            <th style={{ padding: '6px 8px', textAlign: 'left', minWidth: 360, width: 'auto' }}>Sản phẩm *</th>
+                                            <th style={{ padding: '6px 8px', textAlign: 'right', width: 60 }}>SL</th>
+                                            <th style={{ padding: '6px 8px', textAlign: 'left', width: 60 }}>Đơn vị</th>
+                                            <th style={{ padding: '6px 8px', textAlign: 'right', width: 100 }}>Đơn giá</th>
+                                            <th style={{ padding: '6px 8px', textAlign: 'right', width: 56 }}>CK%</th>
+                                            <th style={{ padding: '6px 8px', textAlign: 'left', width: 70 }}>Thuế</th>
+                                            <th style={{ padding: '6px 8px', textAlign: 'right', width: 110 }}>Thành tiền</th>
+                                            <th style={{ padding: '6px 8px', width: 32 }}></th>
                                         </tr>
                                     </thead>
                                     <tbody>
