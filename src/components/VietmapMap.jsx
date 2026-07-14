@@ -49,17 +49,6 @@ const VIETMAP_TILE_API_KEY = import.meta.env.VIETMAP_TILE_API_KEY     || '';
 const VIETMAP_STYLE_URL    = import.meta.env.VITE_VIETMAP_STYLE       || '';
 const USE_VIETMAP          = import.meta.env.VITE_USE_VIETMAP_TILES === 'true';
 
-// Debug: log env vars vào console để verify trên production
-if (USE_VIETMAP) {
-  // eslint-disable-next-line no-console
-  console.info('[VietmapMap] ENV →',
-    'USE_VIETMAP=', USE_VIETMAP,
-    '| TILE_KEY set:', !!import.meta.env.VITE_VIETMAP_TILE_API_KEY,
-    '| STYLE_URL:', import.meta.env.VITE_VIETMAP_STYLE || '(default tm)',
-    '| MAP_STYLE_URL:', import.meta.env.VITE_MAP_STYLE_URL || '(none)',
-  );
-}
-
 // OpenFreeMap: free, no API key, hỗ trợ name:latin + name:nonlatin (Tiếng Việt có dấu).
 const OPENFREEMAP_LIBERTY = 'https://tiles.openfreemap.org/styles/liberty';
 const OPENFREEMAP_POSITRON = 'https://tiles.openfreemap.org/styles/positron';
@@ -78,13 +67,19 @@ if (import.meta.env.VITE_MAP_STYLE_URL) {
   // Default fallback: OpenFreeMap Liberty (miễn phí, luôn work, không cần key).
   if (USE_VIETMAP && !VIETMAP_TILE_API_KEY) {
     // eslint-disable-next-line no-console
-    console.warn(
-      '[VietmapMap] VITE_USE_VIETMAP_TILES=true nhưng VITE_VIETMAP_TILE_API_KEY chưa set — ' +
-      'fallback về OpenFreeMap. Set tile key (1f7fe529...) trên Vercel Dashboard.'
-    );
+    console.info('[VietmapMap] TILE_KEY chưa set — đang dùng OpenFreeMap. Set VITE_VIETMAP_TILE_API_KEY trên Vercel để dùng tile Vietmap.');
   }
   RESOLVED_STYLE_URL = OPENFREEMAP_LIBERTY;
 }
+
+// Log 1 dòng duy nhất: tổng kết env + style URL đang dùng.
+// eslint-disable-next-line no-console
+console.info(
+  '[VietmapMap] config →',
+  'USE_VIETMAP=', USE_VIETMAP,
+  '| TILE_KEY set:', !!import.meta.env.VITE_VIETMAP_TILE_API_KEY,
+  '| style:', RESOLVED_STYLE_URL.substring(0, 70) + (RESOLVED_STYLE_URL.length > 70 ? '…' : ''),
+);
 
 let vietmapLoading = null;
 
@@ -152,9 +147,9 @@ export default function VietmapMap({
         style:     RESOLVED_STYLE_URL,
         center:    [center.lng, center.lat],
         zoom,
-        // Proxy mọi request Vietmap qua backend của mình (giải quyết CORS khi
-        // Render IP bị Vietmap chặn). Backend nhận URL upstream, inject apikey,
-        // fetch, trả về kèm Access-Control-Allow-Origin: *.
+        // QUAN TRỌNG: nếu tile key đã set, để browser gọi THẲNG tới maps.vietmap.vn
+        // (CORS *, browser IP OK). Proxy chỉ dùng khi KHÔNG có tile key
+        // (vì lúc đó tile key không có trong style.json → render IP bị chặn 403).
         transformRequest: (url, resourceType) => {
           if (typeof url !== 'string') return { url };
 
@@ -163,20 +158,17 @@ export default function VietmapMap({
             return { url };
           }
 
-          // Chỉ proxy Vietmap tiles khi USE_VIETMAP=true và là request tới maps.vietmap.vn
-          // Khi USE_VIETMAP=false (default = OpenFreeMap), tất cả request đi thẳng
-          // qua OpenFreeMap hoặc CDN gốc — không cần proxy.
-          if (!USE_VIETMAP || !url.includes('maps.vietmap.vn')) {
+          // Nếu không dùng Vietmap tile, hoặc đã có tile key, để browser gọi thẳng
+          // (Vietmap CDN CORS open, không cần proxy khi có key)
+          if (!USE_VIETMAP || VIETMAP_TILE_API_KEY || !url.includes('maps.vietmap.vn')) {
             return { url };
           }
 
-          // Inject apikey nếu thiếu
+          // Fallback: proxy qua backend (chỉ khi USE_VIETMAP=true mà KHÔNG có tile key)
           let u = url;
           if (!/[?&]apikey=[^&]+/.test(u) && !/[?&]api[-_]key=[^&]+/i.test(u)) {
-            u += (u.includes('?') ? '&' : '?') + 'apikey=' + encodeURIComponent(VIETMAP_TILE_API_KEY);
+            u += (u.includes('?') ? '&' : '?') + 'apikey=' + encodeURIComponent(VIETMAP_API_KEY);
           }
-
-          // Đổi origin sang backend proxy
           const proxied = u.replace(
             'https://maps.vietmap.vn',
             VIETMAP_PROXY_BASE,
