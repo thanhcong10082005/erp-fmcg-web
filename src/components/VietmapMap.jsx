@@ -399,6 +399,8 @@ export default function VietmapMap({
   function buildMarkerElement(point) {
     const el = document.createElement('div');
     el.className = 'vietmap-pin';
+    el.dataset.color    = baseColor;
+    el.dataset.stopOrder = String(stopOrder ?? '');
 
     const isAssigned  = !!(point.metadata?.trip_id);
     const stopOrder  = point.metadata?.stop_order;
@@ -463,14 +465,48 @@ export default function VietmapMap({
     // Update or create markers
     valid.forEach(p => {
       const existing = map_.get(p.id);
+      const prevEl   = existing ? existing.getElement() : null;
+      const prevColor = prevEl ? prevEl.dataset.color : undefined;
+      const prevOrder = prevEl ? prevEl.dataset.stopOrder : undefined;
+
+      // Determine if visual properties changed (require element rebuild)
+      const visualChanged =
+        prevColor !== String(p.color || '#3B82F6') ||
+        prevOrder !== String(p.metadata?.stop_order ?? '');
+
       if (existing) {
         const ll = existing.getLngLat();
         const posChanged = Math.abs(ll.lat - p.lat) > 1e-7 || Math.abs(ll.lng - p.lng) > 1e-7;
-        if (posChanged) existing.setLngLat([p.lng, p.lat]);
-        // Rebuild element to update visual (stop_order, color, size)
-        const newEl = buildMarkerElement(p);
-        existing.getElement().replaceWith(newEl);
-        existing.getElement = () => newEl; // Marker.getElement() returns same element
+
+        if (posChanged) {
+          existing.setLngLat([p.lng, p.lat]);
+        }
+
+        if (visualChanged) {
+          // Remove old marker + element, create fresh one
+          existing.remove();
+          map_.delete(p.id);
+          const el = buildMarkerElement(p);
+          const marker = new vietmap.Marker({ element: el, draggable })
+            .setLngLat([p.lng, p.lat])
+            .addTo(map);
+
+          if (onPointClick) {
+            el.addEventListener('click', (e) => {
+              e.stopPropagation();
+              onPointClick(p);
+            });
+          }
+
+          if (draggable && onLocationChange) {
+            marker.on('dragend', () => {
+              const lngLat = marker.getLngLat();
+              onLocationChange({ ...p, lat: lngLat.lat, lng: lngLat.lng });
+            });
+          }
+
+          map_.set(p.id, marker);
+        }
       } else {
         const el = buildMarkerElement(p);
         const marker = new vietmap.Marker({ element: el, draggable })
