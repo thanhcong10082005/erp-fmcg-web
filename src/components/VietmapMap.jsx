@@ -132,12 +132,16 @@ export default function VietmapMap({
   assignLoading = false,
   // Phase 6: Callback khi map ready (dùng cho AuditMap thêm layers tùy chỉnh)
   onMapReady,
+  // Force re-render marker layer (increment to force remount)
+  forceRender = 0,
 }) {
   const containerRef  = useRef(null);
   const mapRef       = useRef(null);
   const markersRef   = React.useRef(new Map());     // id → Marker
   const popupRef     = useRef(null);              // Vietmap Popup instance
   const initFlag     = React.useRef(false);
+  // Track previous forceRender to detect changes
+  const prevForceRef = React.useRef(forceRender);
 
   // ── Phase 3: Route line management ────────────────────────────────
   function updateRouteLayer(map, vietmap) {
@@ -294,10 +298,8 @@ export default function VietmapMap({
   // ── Mount: load Vietmap + init map ────────────────────────────────
   useEffect(() => {
     let cancelled = false;
-    let retryCount = 0;
-    const MAX_RETRIES = 2;
 
-    function tryInit(vietmap) {
+    loadVietmap().then((vietmap) => {
       if (cancelled || !containerRef.current || mapRef.current) return;
 
       const map = new vietmap.Map({
@@ -322,44 +324,45 @@ export default function VietmapMap({
 
       map.addControl(new vietmap.NavigationControl(), 'top-right');
 
-      // Use 'idle' instead of 'load' so markers render even if style tiles fail
-      map.on('idle', () => {
-        if (cancelled) return;
+      map.on('load', () => {
+        if (cancelled || !containerRef.current) return;
         mapRef.current = map;
-        renderMarkers(map, vietmap);
-        updateRouteLayer(map, vietmap);
+
+        try {
+          renderMarkers(map, vietmap);
+          updateRouteLayer(map, vietmap);
+        } catch (err) {
+          console.error('[VietmapMap] render error:', err);
+        }
+
         const validPoints = points.filter(p => typeof p.lat === 'number' && typeof p.lng === 'number');
         if (fitBounds && validPoints.length > 1 && !initFlag.current) {
           initFlag.current = true;
-          fitMapToPoints(map, validPoints);
+          try { fitMapToPoints(map, validPoints); } catch (_) { /* ignore */ }
         }
-        if (onMapReady) onMapReady(map);
+
+        if (onMapReady) {
+          try { onMapReady(map); } catch (_) { /* ignore */ }
+        }
       });
 
+      // Handle resource errors gracefully — don't crash the map
       map.on('error', (e) => {
-        // Only retry on tile/resource errors (not style parse errors)
-        if (cancelled || retryCount >= MAX_RETRIES) return;
+        if (cancelled) return;
+        // Only log non-critical tile errors; do NOT retry (retries cause more instability)
         const errId = e?.error?.id || '';
-        if (errId === 'http' || errId === 'tiles' || errId === 'socket' || errId === 'webgl') {
-          retryCount++;
+        const isTileError = ['http', 'tiles', 'socket', 'webgl', 'raster', 'source'].includes(errId);
+        if (isTileError) {
+          // Tile errors are non-fatal; just warn
           // eslint-disable-next-line no-console
-          console.warn(`[VietmapMap] Tile/resource error — retry ${retryCount}/${MAX_RETRIES}:`, errId);
-          setTimeout(() => {
-            if (!cancelled && mapRef.current) {
-              try { mapRef.current.remove(); } catch (_) { /* ignore */ }
-              mapRef.current = null;
-              markersRef.current = new Map();
-              loadVietmap().then(tryInit).catch((err2) => {
-                console.error('[VietmapMap] retry failed:', err2);
-              });
-            }
-          }, 1500);
+          console.warn('[VietmapMap] tile/resource error (non-fatal):', errId, e?.error?.message);
+        } else if (errId) {
+          // eslint-disable-next-line no-console
+          console.error('[VietmapMap] map error:', errId, e?.error?.message);
         }
       });
-    }
-
-    loadVietmap().then(tryInit).catch((err) => {
-      console.error('[VietmapMap] load failed:', err);
+    }).catch((err) => {
+      console.error('[VietmapMap] VietMapGL load failed:', err);
     });
 
     return () => {
@@ -377,13 +380,39 @@ export default function VietmapMap({
   // ── Re-render markers khi points đổi ─────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || map.loaded?.() === false) return;
+    if (!map) return;
     loadVietmap().then((vietmap) => {
       if (!vietmap || !mapRef.current) return;
-      renderMarkers(mapRef.current, vietmap);
+      try { renderMarkers(mapRef.current, vietmap); } catch (err) {
+        console.error('[VietmapMap] renderMarkers error:', err);
+      }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [points]);
+
+  // ── Force render fallback: if markers didn't appear after mount, force them ──
+  useEffect(() => {
+    if (forceRender === prevForceRef.current) return;
+    prevForceRef.current = forceRender;
+
+    const map = mapRef.current;
+    if (!map) return;
+
+    loadVietmap().then((vietmap) => {
+      if (!vietmap || !mapRef.current) return;
+      try {
+        // Clear old markers and re-render
+        for (const [, marker] of markersRef.current.entries()) {
+          try { marker.remove(); } catch (_) { /* ignore */ }
+        }
+        markersRef.current = new Map();
+        renderMarkers(mapRef.current, vietmap);
+      } catch (err) {
+        console.error('[VietmapMap] forceRender error:', err);
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [forceRender]);
 
   // ── Phase 3: Update route layer khi geometry đổi ─────────────────
   useEffect(() => {

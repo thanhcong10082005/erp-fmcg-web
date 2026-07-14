@@ -36,6 +36,8 @@ export default function DispatcherMapPage({ token, userRole }) {
     const [searchText, setSearchText]       = useState('');
     const [routes, setRoutes]               = useState([]);
     const [savingId, setSavingId]           = useState(null);
+    // Force-reload markers counter
+    const [forceRenderKey, setForceRenderKey] = useState(0);
 
     // ── Geocoding state ────────────────────────────────────────
     const [pendingCount, setPendingCount]   = useState(0);
@@ -405,6 +407,9 @@ export default function DispatcherMapPage({ token, userRole }) {
                     <button className="btn btn-outline btn-sm" onClick={loadAll} disabled={loading}>
                         {loading ? '⏳ Đang tải...' : '🔄 Làm mới'}
                     </button>
+                    <button className="btn btn-outline btn-sm" onClick={() => setForceRenderKey(k => k + 1)} title="Force re-render markers">
+                        🎯 Hiện markers
+                    </button>
                 </div>
             </div>
 
@@ -520,6 +525,19 @@ export default function DispatcherMapPage({ token, userRole }) {
                         onSelectTripForAssign={setPopupTripId}
                         onConfirmAssign={handlePopupAssign}
                         assignLoading={assignLoading}
+                        // Force-render fallback
+                        forceRender={forceRenderKey}
+                        onMapReady={(map) => {
+                            if (map && filteredPoints.length > 0) {
+                                // Double-ensure markers are rendered on map ready
+                                setTimeout(() => {
+                                    if (!map.isRemoved?.()) {
+                                        // Force a re-render of markers
+                                        setForceRenderKey(k => k + 1);
+                                    }
+                                }, 100);
+                            }
+                        }}
                     />
                     {savingId && (
                         <div style={{ padding: 8, fontSize: '0.8rem', color: '#6B7280', background: '#F3F4F6' }}>

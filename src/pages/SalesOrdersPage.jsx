@@ -435,12 +435,6 @@ export default function SalesOrdersPage({ token }) {
                                         onChange={e => setForm(f => ({ ...f, expected_date: e.target.value }))} />
                                 </div>
                             </div>
-                            <div className="form-group" style={{ marginBottom: 20 }}>
-                                <label>Ghi chú</label>
-                                <input value={form.notes}
-                                    onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
-                                    placeholder="Ghi chú cho đơn hàng..." />
-                            </div>
 
                             {/* Line items */}
                             <div style={{ border: '1px solid #E5E7EB', borderRadius: 8, overflow: 'hidden', marginBottom: 16 }}>
@@ -592,8 +586,16 @@ export default function SalesOrdersPage({ token }) {
                                 </table>
                             </div>
 
-                            {/* Totals */}
-                            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 20 }}>
+                            {/* Ghi chú (bên dưới products table để không che dropdown) */}
+                            <div className="form-group order-form-body" style={{ marginBottom: 20 }}>
+                                <label>Ghi chú</label>
+                                <input value={form.notes}
+                                    onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
+                                    placeholder="Ghi chú cho đơn hàng..." />
+                            </div>
+
+                            {/* Totals (bên dưới products table) */}
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
                                 <table style={{ minWidth: 300, border: '1px solid #E5E7EB', borderRadius: 8, overflow: 'hidden' }}>
                                     <tbody>
                                         <tr style={{ background: '#F9FAFB' }}>
