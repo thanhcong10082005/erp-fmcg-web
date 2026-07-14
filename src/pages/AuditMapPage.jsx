@@ -324,13 +324,24 @@ export default function AuditMapPage({ token }) {
 // ── Inner audit map component ───────────────────────────────────────────
 function AuditMap({ planPoints, actualDotsGeoJSON, planGeometry }) {
     const [mapReady, setMapReady] = useState(false);
+    const mapRef = useRef(null);
 
     function handleMapReady(map) {
+        mapRef.current = map;
         setMapReady(true);
-        // After map loads, add actual dots layer
-        if (!actualDotsGeoJSON) return;
+    }
+
+    // Add actual dots layer when BOTH map is ready AND data is available
+    useEffect(() => {
+        if (!mapReady || !mapRef.current || !actualDotsGeoJSON) return;
+
+        const map = mapRef.current;
         const vietmap = window.vietmapgl;
         if (!vietmap) return;
+
+        // Remove old layers if any (in case of re-render)
+        if (map.getLayer('audit-actual-dots-layer'))  map.removeLayer('audit-actual-dots-layer');
+        if (map.getSource('audit-actual-dots'))       map.removeSource('audit-actual-dots');
 
         const SOURCE = 'audit-actual-dots';
         const LAYER  = 'audit-actual-dots-layer';
@@ -368,7 +379,12 @@ function AuditMap({ planPoints, actualDotsGeoJSON, planGeometry }) {
 
         map.on('mouseenter', LAYER, () => { map.getCanvas().style.cursor = 'pointer'; });
         map.on('mouseleave', LAYER, () => { map.getCanvas().style.cursor = ''; });
-    }
+
+        return () => {
+            if (map.getLayer(LAYER))  map.removeLayer(LAYER);
+            if (map.getSource(SOURCE)) map.removeSource(SOURCE);
+        };
+    }, [mapReady, actualDotsGeoJSON]);
 
     return (
         <VietmapMap

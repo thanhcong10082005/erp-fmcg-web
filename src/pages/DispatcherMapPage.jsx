@@ -32,7 +32,8 @@ export default function DispatcherMapPage({ token, userRole }) {
     const [selectedPoint, setSelectedPoint]    = useState(null);
     const [loading, setLoading]               = useState(false);
     const [err, setErr]                     = useState('');
-    const [filters, setFilters]               = useState({ routeCode: '', type: '' });
+    const [filters, setFilters]               = useState({ routeCode: '', type: '', geoConfidence: '' });
+    const [searchText, setSearchText]       = useState('');
     const [routes, setRoutes]               = useState([]);
     const [savingId, setSavingId]           = useState(null);
 
@@ -85,7 +86,38 @@ export default function DispatcherMapPage({ token, userRole }) {
         return m;
     }, [trips]);
 
+    // ── Client-side filter: search text + geocoding confidence ──────
+    const filteredPoints = React.useMemo(() => {
+        const q = searchText.trim().toLowerCase();
+        return points.filter(p => {
+            // Search filter
+            if (q) {
+                const name  = (p.metadata?.partner_name || '').toLowerCase();
+                const code  = (p.metadata?.partner_code || '').toLowerCase();
+                const route = (p.metadata?.route_code  || '').toLowerCase();
+                if (!name.includes(q) && !code.includes(q) && !route.includes(q)) return false;
+            }
+            // Confidence filter
+            if (filters.geoConfidence) {
+                const conf = p.metadata?.geocoding_confidence;
+                if (filters.geoConfidence === 'HIGH') {
+                    if (conf !== 'HIGH' && conf !== 'MANUAL') return false;
+                } else if (filters.geoConfidence === 'MEDIUM') {
+                    if (conf !== 'MEDIUM') return false;
+                } else if (filters.geoConfidence === 'LOW') {
+                    if (conf !== 'LOW') return false;
+                } else if (filters.geoConfidence === 'NONE') {
+                    if (conf && conf !== 'NONE') return false;
+                }
+            }
+            return true;
+        });
+    }, [points, searchText, filters.geoConfidence]);
+
     // ── Load partners + trips ────────────────────────────────────
+    // IMPORTANT: loadAll KHÔNG phụ thuộc partnerToTripMap/partnerMetaMap
+    // vì sẽ gây infinite loop (trips → maps → trips → ...)
+    // Maps được build TRONG loadAll từ tripsRes, không từ state trips
     const loadAll = useCallback(async () => {
         setLoading(true);
         setErr('');
@@ -100,10 +132,25 @@ export default function DispatcherMapPage({ token, userRole }) {
                 apiCall('GET', '/sales/trips?status=PREPARING', null, token),
             ]);
 
+            // Build maps từ tripsRes (fresh data) — KHÔNG dùng state trips ở đây
+            const incomingTrips = Array.isArray(tripsRes) ? tripsRes : (tripsRes?.data || []);
+            const pToTripMap = new Map();
+            const pMetaMap   = new Map();
+            incomingTrips.forEach(t => {
+                (t.orders || []).forEach(o => {
+                    pToTripMap.set(o.partner_id, t.trip_id);
+                    pMetaMap.set(o.partner_id, {
+                        trip_id:     t.trip_id,
+                        stop_order:  o.stop_order,
+                        total_weight: o.total_amount || 0,
+                    });
+                });
+            });
+
             const features = geoRes?.features || [];
             const mapped = features.map(f => {
-                const tripId  = partnerToTripMap.get(f.properties.partner_id) || null;
-                const meta    = partnerMetaMap.get(f.properties.partner_id);
+                const tripId = pToTripMap.get(f.properties.partner_id) || null;
+                const meta   = pMetaMap.get(f.properties.partner_id);
                 return {
                     id:    f.properties.partner_id,
                     lat:   f.geometry.coordinates?.[1],
@@ -125,33 +172,15 @@ export default function DispatcherMapPage({ token, userRole }) {
 
             setPoints(mapped);
             setRoutes([...new Set(features.map(f => f.properties.route_code).filter(Boolean))].sort());
-            setTrips(Array.isArray(tripsRes) ? tripsRes : (tripsRes?.data || []));
+            setTrips(incomingTrips);
         } catch (e) {
             setErr(e.message);
         } finally {
             setLoading(false);
         }
-    }, [token, filters, partnerToTripMap, partnerMetaMap]);
+    }, [token, filters]); // KHÔNG thêm partnerToTripMap/partnerMetaMap
 
     useEffect(() => { if (token) loadAll(); }, [filters, token]);
-
-    // ── Re-color pins khi trips đổi ─────────────────────────────
-    useEffect(() => {
-        setPoints(prev => prev.map(p => {
-            const tripId = partnerToTripMap.get(p.id) || null;
-            const meta   = partnerMetaMap.get(p.id);
-            return {
-                ...p,
-                color: colorForTrip(tripId),
-                metadata: {
-                    ...p.metadata,
-                    trip_id:    tripId,
-                    stop_order: meta?.stop_order || null,
-                    total_weight: meta?.total_weight || null,
-                },
-            };
-        }));
-    }, [partnerToTripMap, partnerMetaMap]);
 
     // ── Phase 3: Fetch route khi selectedTripId đổi ─────────────
     const fetchTripRoute = useCallback(async (tripId) => {
@@ -473,7 +502,7 @@ export default function DispatcherMapPage({ token, userRole }) {
                 {/* Map */}
                 <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
                     <VietmapMap
-                        points={points}
+                        points={filteredPoints}
                         height="650px"
                         fitBounds={true}
                         draggable={canEdit}
@@ -503,8 +532,16 @@ export default function DispatcherMapPage({ token, userRole }) {
                 <div>
                     {/* Filters */}
                     <div className="card" style={{ marginBottom: 12 }}>
-                        <div className="card-header"><h4 style={{ margin: 0, fontSize: '0.95rem' }}>🔍 Lọc</h4></div>
+                        <div className="card-header"><h4 style={{ margin: 0, fontSize: '0.95rem' }}>🔍 Lọc & Tìm kiếm</h4></div>
                         <div className="card-body" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            <input
+                                type="text"
+                                className="input"
+                                placeholder="🔎 Tìm tên / mã ASO..."
+                                value={searchText}
+                                onChange={e => setSearchText(e.target.value)}
+                                style={{ fontSize: '0.85rem' }}
+                            />
                             <select className="input" value={filters.type} onChange={e => setFilters(f => ({ ...f, type: e.target.value }))}>
                                 <option value="">— Tất cả loại —</option>
                                 {PARTNER_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
@@ -513,6 +550,27 @@ export default function DispatcherMapPage({ token, userRole }) {
                                 <option value="">— Tất cả tuyến —</option>
                                 {routes.map(r => <option key={r} value={r}>{r}</option>)}
                             </select>
+                            <select
+                                className="input"
+                                value={filters.geoConfidence}
+                                onChange={e => setFilters(f => ({ ...f, geoConfidence: e.target.value }))}
+                                style={{ fontSize: '0.85rem' }}
+                            >
+                                <option value="">— Tất cả tọa độ —</option>
+                                <option value="HIGH">✓ Chỉ tọa độ tốt (HIGH / MANUAL)</option>
+                                <option value="MEDIUM">○ Tọa độ trung bình (MEDIUM)</option>
+                                <option value="LOW">⚠️ Tọa độ yếu (LOW)</option>
+                                <option value="NONE">❌ Chưa có tọa độ</option>
+                            </select>
+                            {(searchText || filters.geoConfidence) && (
+                                <button
+                                    className="btn btn-outline btn-sm"
+                                    onClick={() => { setSearchText(''); setFilters(f => ({ ...f, geoConfidence: '' })); }}
+                                    style={{ fontSize: '0.8rem' }}
+                                >
+                                    ✕ Xóa bộ lọc
+                                </button>
+                            )}
                         </div>
                     </div>
 
