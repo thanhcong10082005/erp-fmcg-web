@@ -67,7 +67,7 @@ function ensureVietmapGL() {
 function buildMarkerEl(point) {
   const el = document.createElement('div');
   el.className = 'vietmap-marker-pin';
-  el.style.cssText = 'position:relative;cursor:pointer;display:flex;align-items:center;justify-content:center;';
+  el.style.cssText = 'cursor:pointer;';
 
   const isAssigned = !!(point.metadata?.trip_id);
   const stopOrder  = point.metadata?.stop_order;
@@ -89,7 +89,7 @@ function buildMarkerEl(point) {
   el.innerHTML = `
     <div style="width:${size}px;height:${size}px;background:${bgColor};border:3px solid #fff;border-radius:50%;
       display:flex;align-items:center;justify-content:center;font-size:${fontSize}px;font-weight:700;color:#fff;
-      box-shadow:0 4px 12px rgba(0,0,0,0.4);font-family:system-ui,-apple-system,sans-serif;position:relative;z-index:1;"
+      box-shadow:0 4px 12px rgba(0,0,0,0.4);font-family:system-ui,-apple-system,sans-serif;z-index:1;"
       title="${point.label || ''}${isAssigned && stopOrder ? ` — Stop #${stopOrder}` : ''}">${label}</div>${pulse}`;
   return el;
 }
