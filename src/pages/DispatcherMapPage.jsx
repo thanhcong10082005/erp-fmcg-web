@@ -88,10 +88,14 @@ export default function DispatcherMapPage({ token, userRole }) {
         return m;
     }, [trips]);
 
-    // ── Client-side filter: search text + geocoding confidence ──────
+    // ── Client-side filter: trip + search text + geocoding confidence ─
     const filteredPoints = React.useMemo(() => {
         const q = searchText.trim().toLowerCase();
         return points.filter(p => {
+            // Trip filter: when a trip is selected, show only its partners
+            if (selectedTripId) {
+                if (String(p.metadata?.trip_id) !== String(selectedTripId)) return false;
+            }
             // Search filter
             if (q) {
                 const name  = (p.metadata?.partner_name || '').toLowerCase();
@@ -114,7 +118,7 @@ export default function DispatcherMapPage({ token, userRole }) {
             }
             return true;
         });
-    }, [points, searchText, filters.geoConfidence]);
+    }, [points, searchText, filters.geoConfidence, selectedTripId]);
 
     // ── Load partners + trips ────────────────────────────────────
     // IMPORTANT: loadAll KHÔNG phụ thuộc partnerToTripMap/partnerMetaMap
@@ -510,6 +514,7 @@ export default function DispatcherMapPage({ token, userRole }) {
                         points={filteredPoints}
                         height="650px"
                         fitBounds={true}
+                        boundsKey={selectedTripId}
                         draggable={canEdit}
                         onPointClick={setSelectedPoint}
                         onLocationChange={handleLocationChange}

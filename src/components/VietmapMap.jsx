@@ -150,12 +150,14 @@ export default function VietmapMap({
   assignLoading = false,
   onMapReady,
   forceRender = 0,
+  boundsKey,           // trigger re-fit when trip changes
 }) {
   const containerRef    = useRef(null);
   const mapRef          = useRef(null);
   const markersRef      = useRef(new Map());
   const popupRef        = useRef(null);
   const initFlag        = useRef(false);
+  const prevBoundsKey   = useRef(null);
   const prevForceRef    = useRef(forceRender);
   const prevSelectedRef = useRef(null);
 
@@ -326,14 +328,27 @@ export default function VietmapMap({
     updateRoute();
   }, [mapReady, points, routeGeometry]);
 
-  // ── Fit bounds on first load ─────────────────────────────────────
+  // ── Fit bounds on first load + re-fit when boundsKey changes ──────
   useEffect(() => {
-    if (!mapReady || !fitBounds || initFlag.current) return;
+    if (!mapReady || !fitBounds) return;
     const map = mapRef.current;
     if (!map) return;
     const valid = points.filter(p => typeof p.lat === 'number' && typeof p.lng === 'number');
-    if (valid.length < 2) return;
-    initFlag.current = true;
+    if (valid.length < 1) return;
+
+    // Re-fit only when boundsKey changes (e.g., trip selection)
+    if (boundsKey !== undefined && boundsKey !== null && boundsKey === prevBoundsKey.current) {
+      return;
+    }
+    prevBoundsKey.current = boundsKey;
+
+    if (valid.length === 1) {
+      try {
+        map.flyTo({ center: [valid[0].lng, valid[0].lat], zoom: 14, duration: 800 });
+      } catch (_) { /* ignore */ }
+      return;
+    }
+
     let minLng = valid[0].lng, maxLng = valid[0].lng;
     let minLat = valid[0].lat, maxLat = valid[0].lat;
     valid.forEach(p => {
@@ -345,7 +360,7 @@ export default function VietmapMap({
     try {
       map.fitBounds([[minLng, minLat], [maxLng, maxLat]], { padding: 60, duration: 800, maxZoom: 14 });
     } catch (_) { /* ignore */ }
-  }, [mapReady, points, fitBounds]);
+  }, [mapReady, points, fitBounds, boundsKey]);
 
   // ── Popup ────────────────────────────────────────────────────────
   useEffect(() => {
