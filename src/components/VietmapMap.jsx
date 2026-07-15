@@ -1,142 +1,110 @@
 /**
- * VietmapMap — Map component using maplibre-gl (ESM) + VietMap style tiles.
+ * VietmapMap — Map component using Leaflet (raster tiles) + VietMap / OSM tiles.
  *
  * APPROACH:
- *   VietMap GL JS 6.0.1 CDN bundle is a UMD/IIFE that re-declares the global `Map`
- *   class internally, causing "Cannot access 'a' before initialization" when the
- *   Map() constructor is first invoked (TDZ bug in the minified UMD bundle).
+ *   Leaflet is the most stable, battle-tested mapping library for React.
+ *   It uses raster image tiles (WMS-style) — no GL, no style JSON, no API-key
+ *   injection headaches. Works with VietMap's tile server by simply appending
+ *   the API key to the tile URL template.
  *
- *   SOLUTION: Use maplibre-gl from npm (ESM, no UMD pollution) as the map engine,
- *   and point it at VietMap's tile/style server. MapLibre GL is the upstream open-source
- *   fork of mapbox-gl 1.x — identical API to VietMap GL JS, fully compatible with
- *   VietMap's style JSON and tile endpoints.
- *
- * WHY MAPLIBRE-GL (not react-map-gl or direct VietMap GL JS):
- *   - maplibre-gl is ESM → no global `Map` collision, no TDZ bug
- *   - 100% API-compatible with mapbox-gl / vietmap-gl 1.x
- *   - Can use VietMap style JSON directly
- *   - Smaller bundle than loading via CDN
+ * WHY LEAFLET (not GL-based libraries):
+ *   - Zero GL engine issues (no WebGL context, no shader compilation)
+ *   - Tile URLs are plain strings — key injection is just string concatenation
+ *   - Works reliably with VietMap, OSM, and any XYZ tile provider
+ *   - Lightweight and mature (11k stars, 10+ years stable)
  *
  * Features:
  *   - Phase 5: Data-rich pins (🏪/📦/stop_number icons, weight-based sizing)
  *   - Phase 4: Popup assign UI
- *   - Phase 3: Route line (LineString) between delivery stops
+ *   - Phase 3: Route line between delivery stops
  *   - Draggable pins for geocoding
  */
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import maplibregl from 'maplibre-gl';
-import 'maplibre-gl/dist/maplibre-gl.css';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 
 // ── Tile / Style config ───────────────────────────────────────────
-const VIETMAP_TILE_KEY  = import.meta.env.VITE_VIETMAP_TILE_API_KEY || '';
-const VIETMAP_STYLE_URL = import.meta.env.VITE_VIETMAP_STYLE_URL || '';
-const MAP_STYLE_URL     = import.meta.env.VITE_MAP_STYLE_URL || '';
+const VIETMAP_TILE_KEY = import.meta.env.VITE_VIETMAP_TILE_API_KEY || '';
+const VIETMAP_TILE_URL = import.meta.env.VITE_VIETMAP_TILE_URL || '';
+const MAP_STYLE_URL    = import.meta.env.VITE_MAP_STYLE_URL || '';
+const USE_VIETMAP_TILES = import.meta.env.VITE_USE_VIETMAP_TILES === 'true';
 
-// ── Load and patch style JSON ───────────────────────────────────────
-// Fetch style.json with API key, then inject key into all tile/font/sprite URLs
-// so that MapLibre can use them without a proxy server.
-async function fetchPatchedStyle() {
-  let styleUrl;
-
+function resolveTileLayer() {
   if (MAP_STYLE_URL) {
-    styleUrl = MAP_STYLE_URL;
-  } else if (VIETMAP_TILE_KEY) {
-    if (VIETMAP_STYLE_URL) {
-      styleUrl = `${VIETMAP_STYLE_URL}${VIETMAP_STYLE_URL.includes('?') ? '&' : '?'}apikey=${encodeURIComponent(VIETMAP_TILE_KEY)}`;
-    } else {
-      styleUrl = `https://maps.vietmap.vn/maps/styles/tm/style.json?apikey=${encodeURIComponent(VIETMAP_TILE_KEY)}`;
-    }
-  } else {
-    // eslint-disable-next-line no-console
-    console.info('[VietmapMap] No tile key — using OpenFreeMap (OSM) tiles.');
-    return { type: 'style', json: null, url: 'https://tiles.openfreemap.org/styles/liberty' };
+    return { urlTemplate: MAP_STYLE_URL, attribution: '', subdomains: '' };
   }
 
-  try {
-    const resp = await fetch(styleUrl);
-    if (!resp.ok) throw new Error(`style fetch failed: ${resp.status}`);
-    const style = await resp.json();
-
-    // Inject apikey into every URL that belongs to VietMap
-    const patch = (u) => {
-      if (typeof u !== 'string') return u;
-      if (!u.includes('maps.vietmap.vn') && !u.includes('tile.vietmap.vn')) return u;
-      if (/[?&]apikey=[^&]+/i.test(u)) return u; // already has key
-      const sep = u.includes('?') ? '&' : '?';
-      return `${u}${sep}apikey=${encodeURIComponent(VIETMAP_TILE_KEY)}`;
-    };
-
-    if (style.sources) {
-      for (const src of Object.values(style.sources)) {
-        if (src.url) src.url = patch(src.url);
-        if (src.tiles) src.tiles = src.tiles.map(patch);
-        if (src.tilejson) src.tilejson = patch(src.tilejson);
-      }
+  if (USE_VIETMAP_TILES && VIETMAP_TILE_KEY) {
+    if (VIETMAP_TILE_URL) {
+      // Custom VietMap tile URL — replace {apikey} placeholder or append
+      const url = VIETMAP_TILE_URL.includes('{apikey}')
+        ? VIETMAP_TILE_URL.replace('{apikey}', VIETMAP_TILE_KEY)
+        : `${VIETMAP_TILE_URL}${VIETMAP_TILE_URL.includes('?') ? '&' : '?'}apikey=${VIETMAP_TILE_KEY}`;
+      return { urlTemplate: url, attribution: '© VietMap', subdomains: '' };
     }
-    if (style.glyphs) style.glyphs = patch(style.glyphs);
-    if (style.sprite) style.sprite = patch(style.sprite);
-
-    return { type: 'style', json: style, url: null };
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error('[VietmapMap] Failed to fetch/patch style.json:', err);
-    return { type: 'style', json: null, url: null };
+    // VietMap v5 raster tile endpoint (street map)
+    // Format: /mt/{style}/{z}/{x}/{y}.png?apikey=...
+    // Styles: tm=street, lm=light, dm=dark
+    const vietmapUrl = `https://maps.vietmap.vn/mt/tm/{z}/{x}/{y}.png?apikey=${VIETMAP_TILE_KEY}`;
+    return { urlTemplate: vietmapUrl, attribution: '© VietMap', subdomains: '' };
   }
+
+  // Default: OSM raster tiles — detailed, free, no API key needed, works everywhere
+  return {
+    urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    subdomains: '',
+  };
 }
 
-// Cache for pre-fetched style so we don't re-fetch on every re-render
-let _styleCache = null;
-let _stylePromise = null;
+const TILE_CONFIG = resolveTileLayer();
 
-function getStyleData() {
-  if (_styleCache) return Promise.resolve(_styleCache);
-  if (!_stylePromise) _stylePromise = fetchPatchedStyle().then(d => { _styleCache = d; return d; });
-  return _stylePromise;
-}
+// eslint-disable-next-line no-console
+console.info('[VietmapMap] Tile layer:', TILE_CONFIG.urlTemplate.split('?')[0]);
 
 // ── Build marker DOM element ──────────────────────────────────────
 function buildMarkerEl(point) {
   const el = document.createElement('div');
-  el.className = 'vietmap-pin';
-  el.style.cssText = 'position:relative;cursor:pointer;';
+  el.className = 'leaflet-marker-pin';
+  el.style.cssText = 'position:relative;cursor:pointer;display:flex;align-items:center;justify-content:center;';
 
   const isAssigned = !!(point.metadata?.trip_id);
   const stopOrder  = point.metadata?.stop_order;
   const weight     = point.metadata?.total_weight;
   const baseColor  = point.color || '#3B82F6';
 
-  let size = 18;
+  let size = 34;
   let label = '🏪';
-  let fontSize = 10;
+  let fontSize = 11;
   let pulse = '';
 
   if (isAssigned && stopOrder) {
-    size = 32;
+    size = 42;
     label = String(stopOrder);
-    fontSize = 13;
+    fontSize = 15;
     pulse = `<div style="
-      position:absolute;top:-4px;left:-4px;right:-4px;bottom:-4px;
-      border:2px solid ${baseColor};border-radius:50%;opacity:0.35;
+      position:absolute;top:-6px;left:-6px;right:-6px;bottom:-6px;
+      border:3px solid ${baseColor};border-radius:50%;opacity:0.3;
       animation:vietmap-pulse 2s infinite;
     "></div>`;
   } else if (typeof weight === 'number' && weight > 0) {
-    if (weight >= 500)      { size = 28; label = '📦'; fontSize = 14; }
-    else if (weight >= 200) { size = 24; label = '📦'; fontSize = 12; }
-    else if (weight >= 100) { size = 20; label = '🏪'; fontSize = 10; }
+    if (weight >= 500)      { size = 38; label = '📦'; fontSize = 13; }
+    else if (weight >= 200) { size = 36; label = '📦'; fontSize = 12; }
+    else if (weight >= 100) { size = 34; label = '🏪'; fontSize = 11; }
   }
 
-  const bgColor = (isAssigned && stopOrder) ? baseColor : '#9CA3AF';
+  const bgColor = (isAssigned && stopOrder) ? baseColor : '#6B7280';
 
   el.innerHTML = `
     <div style="
       width:${size}px;height:${size}px;
       background:${bgColor};
-      border:2.5px solid #fff;
+      border:3px solid #fff;
       border-radius:50%;
       display:flex;align-items:center;justify-content:center;
       font-size:${fontSize}px;font-weight:700;color:#fff;
-      box-shadow:0 3px 10px rgba(0,0,0,0.35);
+      box-shadow:0 4px 12px rgba(0,0,0,0.4);
       font-family:system-ui,-apple-system,sans-serif;
       position:relative;z-index:1;
     " title="${point.label || ''}${isAssigned && stopOrder ? ` — Stop #${stopOrder}` : ''}">
@@ -175,12 +143,12 @@ function buildPopupHTML(point, tripOptions, selectedTripId, assignLoading) {
       </div>
       <div style="margin-top:10px;padding-top:8px;border-top:1px solid #E5E7EB;">
         <label style="font-size:12px;font-weight:600;color:#374151;">Chuyến xe:</label>
-        <select id="vietmap-popup-trip-select"
+        <select id="leaflet-popup-trip-select"
           style="width:100%;margin-top:4px;padding:4px 8px;border:1px solid #D1D5DB;border-radius:4px;font-size:13px;box-sizing:border-box;">
           <option value="">— Chọn chuyến —</option>
           ${tripOptsHTML}
         </select>
-        <button id="vietmap-popup-assign-btn"
+        <button id="leaflet-popup-assign-btn"
           style="width:100%;margin-top:6px;padding:6px 12px;background:#2563EB;color:#fff;border:none;border-radius:4px;
                  font-size:13px;cursor:pointer;font-weight:600;opacity:${assignLoading ? '0.7' : '1'};">
           ${assignLoading ? '⏳ Đang lưu...' : '✅ Gán đơn'}
@@ -203,7 +171,7 @@ export default function VietmapMap({
   // Phase 3: Route
   routeGeometry = null,
   routeColor = '#2563EB',
-  routeWidth = 3,
+  routeWidth = 4,
   routeOpacity = 0.8,
   // Phase 4: Popup assign
   selectedPoint = null,
@@ -217,98 +185,57 @@ export default function VietmapMap({
   forceRender = 0,
 }) {
   const containerRef = useRef(null);
-  const mapRef       = useRef(null);
-  const markersRef    = useRef(new Map()); // id → Marker instance
-  const popupRef      = useRef(null);
-  const initFlag      = useRef(false);
-  const prevForceRef  = useRef(forceRender);
+  const mapRef      = useRef(null);
+  const markersRef  = useRef(new Map()); // id → Marker instance
+  const popupRef    = useRef(null);
+  const routeRef    = useRef(null);
+  const initFlag    = useRef(false);
+  const prevForceRef    = useRef(forceRender);
   const prevSelectedRef = useRef(null);
 
   const [mapReady, setMapReady] = useState(false);
 
-  // ── Init map on mount ─────────────────────────────────────────
+  // ── Init Leaflet map on mount ────────────────────────────────────
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
 
-    let cancelled = false;
+    const map = L.map(containerRef.current, {
+      center: [center.lat, center.lng],
+      zoom,
+      zoomControl: true,
+    });
 
-    async function initMap() {
-      const { type, json: patchedStyle, url: fallbackUrl } = await getStyleData();
-      if (cancelled || !containerRef.current || mapRef.current) return;
+    L.tileLayer(TILE_CONFIG.urlTemplate, {
+      attribution: TILE_CONFIG.attribution,
+      maxZoom: 19,
+    }).addTo(map);
 
-      const styleToUse = (type === 'style' && patchedStyle) ? patchedStyle : fallbackUrl;
+    mapRef.current = map;
+    setMapReady(true);
 
-      // eslint-disable-next-line no-console
-      console.info('[VietmapMap] Loading map with style:', styleToUse);
-
-      const map = new maplibregl.Map({
-        container: containerRef.current,
-        style: styleToUse,
-        center: [center.lng, center.lat],
-        zoom,
-        // Belt-and-suspenders: also intercept every sub-request
-        transformRequest: (url, resourceType) => {
-          if (typeof url !== 'string') return { url };
-          // Inject key into any VietMap URL that slipped through the patch
-          if ((url.includes('maps.vietmap.vn') || url.includes('tile.vietmap.vn'))) {
-            if (/[?&]apikey=[^&]+/i.test(url)) return { url };
-            const sep = url.includes('?') ? '&' : '?';
-            return { url: `${url}${sep}apikey=${encodeURIComponent(VIETMAP_TILE_KEY)}` };
-          }
-          return { url };
-        },
-      });
-
-      map.addControl(new maplibregl.NavigationControl(), 'top-right');
-
-      map.on('load', () => {
-        if (cancelled) return;
-        mapRef.current = map;
-        setMapReady(true);
-        if (onMapReady) {
-          try { onMapReady(map); } catch (_) { /* ignore */ }
-        }
-      });
-
-      map.on('error', (e) => {
-        const errId = e?.error?.id || '';
-        const isTile = ['http', 'tiles', 'socket', 'webgl', 'raster', 'source'].includes(errId);
-        if (isTile) {
-          // eslint-disable-next-line no-console
-          console.warn('[VietmapMap] tile/resource error (non-fatal):', errId);
-        } else if (errId) {
-          // eslint-disable-next-line no-console
-          console.error('[VietmapMap] map error:', errId, e?.error?.message);
-        }
-      });
-
-      return map;
+    if (onMapReady) {
+      try { onMapReady(map); } catch (_) { /* ignore */ }
     }
 
-    const mapOrPromise = initMap();
-
     return () => {
-      cancelled = true;
-      if (mapOrPromise && typeof mapOrPromise === 'object' && mapOrPromise.then) {
-        mapOrPromise.then((map) => {
-          if (map && mapRef.current) {
-            try { mapRef.current.remove(); } catch (_) { /* ignore */ }
-            mapRef.current = null;
-          }
-        }).catch(() => {/* ignore cancel */});
-      } else if (mapOrPromise && mapRef.current) {
-        try { mapRef.current.remove(); } catch (_) { /* ignore */ }
-        mapRef.current = null;
+      if (popupRef.current) {
+        try { popupRef.current.remove(); } catch (_) { /* ignore */ }
+        popupRef.current = null;
+      }
+      for (const [, m] of markersRef.current.entries()) {
+        try { m.remove(); } catch (_) { /* ignore */ }
       }
       markersRef.current = new Map();
+      try { map.remove(); } catch (_) { /* ignore */ }
+      mapRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Render markers ─────────────────────────────────────────────
+  // ── Render markers ───────────────────────────────────────────────
   const renderMarkers = useCallback(() => {
     const map = mapRef.current;
-    if (!map || map.isRemoved?.()) return;
+    if (!map) return;
 
     const valid = points.filter(p => typeof p.lat === 'number' && typeof p.lng === 'number');
     const map_ = markersRef.current;
@@ -316,7 +243,7 @@ export default function VietmapMap({
     // Remove stale markers
     for (const [id, marker] of map_.entries()) {
       if (!valid.some(p => p.id === id)) {
-        try { marker.remove?.(); } catch (_) { /* ignore */ }
+        try { marker.remove(); } catch (_) { /* ignore */ }
         map_.delete(id);
       }
     }
@@ -324,45 +251,32 @@ export default function VietmapMap({
     // Update or create markers
     valid.forEach(p => {
       const existing = map_.get(p.id);
-      const prevEl   = existing ? existing.getElement?.() : null;
-      const prevColor = prevEl?.dataset?.color;
-      const prevOrder = prevEl?.dataset?.stopOrder;
-
-      const visualChanged =
-        prevColor !== String(p.color || '#3B82F6') ||
-        prevOrder !== String(p.metadata?.stop_order ?? '');
 
       if (existing) {
-        let ll;
-        try { ll = existing.getLngLat?.(); } catch (_) { ll = null; }
-        const posChanged = !ll || Math.abs(ll.lat - p.lat) > 1e-7 || Math.abs(ll.lng - p.lng) > 1e-7;
-
-        if (posChanged && existing.setLngLat) {
-          try { existing.setLngLat([p.lng, p.lat]); } catch (_) { /* ignore */ }
+        // Update position if changed
+        const prevLatLng = existing.getLatLng();
+        if (Math.abs(prevLatLng.lat - p.lat) > 1e-7 || Math.abs(prevLatLng.lng - p.lng) > 1e-7) {
+          existing.setLatLng([p.lat, p.lng]);
         }
-
-        if (visualChanged) {
-          try { existing.remove(); } catch (_) { /* ignore */ }
-          map_.delete(p.id);
-          // Fall through to create new below
-        } else {
-          return;
-        }
+        return;
       }
 
       // Create new marker
       try {
         const el = buildMarkerEl(p);
-        el.dataset.color    = p.color || '#3B82F6';
-        el.dataset.stopOrder = String(p.metadata?.stop_order ?? '');
 
-        const marker = new maplibregl.Marker({ element: el, draggable })
-          .setLngLat([p.lng, p.lat])
-          .addTo(map);
+        const marker = L.marker([p.lat, p.lng], {
+          icon: L.divIcon({
+            html: el.outerHTML,
+            className: '',
+            iconSize: null,
+            iconAnchor: [16, 16],
+          }),
+          draggable: !!draggable,
+        }).addTo(map);
 
         if (onPointClick) {
-          el.addEventListener('click', (e) => {
-            e.stopPropagation();
+          marker.on('click', (e) => {
             try { onPointClick(p); } catch (_) { /* ignore */ }
           });
         }
@@ -370,8 +284,8 @@ export default function VietmapMap({
         if (draggable && onLocationChange) {
           marker.on('dragend', () => {
             try {
-              const lngLat = marker.getLngLat();
-              onLocationChange({ ...p, lat: lngLat.lat, lng: lngLat.lng });
+              const latLng = marker.getLatLng();
+              onLocationChange({ ...p, lat: latLng.lat, lng: latLng.lng });
             } catch (_) { /* ignore */ }
           });
         }
@@ -383,48 +297,46 @@ export default function VietmapMap({
     });
   }, [points, draggable, onPointClick, onLocationChange]);
 
-  // ── Update route layer ─────────────────────────────────────────
+  // ── Update route line ────────────────────────────────────────────
   const updateRoute = useCallback(() => {
     const map = mapRef.current;
     if (!map) return;
 
-    const SOURCE = 'planned-route';
-    const LAYER  = 'planned-route-layer';
-    const OUTL   = 'planned-route-outline';
+    // Remove old route
+    if (routeRef.current) {
+      try { routeRef.current.remove(); } catch (_) { /* ignore */ }
+      routeRef.current = null;
+    }
 
     if (!routeGeometry || routeGeometry.type !== 'LineString' || !routeGeometry.coordinates?.length) {
-      [OUTL, LAYER].forEach(id => { if (map.getLayer(id)) map.removeLayer(id); });
-      if (map.getSource(SOURCE)) map.removeSource(SOURCE);
       return;
     }
 
-    const geojson = { type: 'Feature', geometry: routeGeometry, properties: {} };
+    const coords = routeGeometry.coordinates.map(c => [c[1], c[0]]); // [lng,lat] → [lat,lng]
+    if (coords.length < 2) return;
 
-    if (map.getSource(SOURCE)) {
-      try { map.getSource(SOURCE).setData(geojson); } catch (_) { /* ignore */ }
-    } else {
-      try {
-        map.addSource(SOURCE, { type: 'geojson', data: geojson });
-        map.addLayer({ id: OUTL, type: 'line', source: SOURCE,
-          paint: { 'line-color': '#ffffff', 'line-width': routeWidth + 4, 'line-opacity': routeOpacity * 0.3 },
-          layout: { 'line-join': 'round', 'line-cap': 'round' }
-        });
-        map.addLayer({ id: LAYER, type: 'line', source: SOURCE,
-          paint: { 'line-color': routeColor, 'line-width': routeWidth, 'line-opacity': routeOpacity },
-          layout: { 'line-join': 'round', 'line-cap': 'round' }
-        });
-      } catch (_) { /* ignore */ }
+    try {
+      const route = L.polyline(coords, {
+        color: routeColor,
+        weight: routeWidth,
+        opacity: routeOpacity,
+        smoothFactor: 1,
+      }).addTo(map);
+
+      routeRef.current = route;
+    } catch (err) {
+      console.error('[VietmapMap] route render failed:', err);
     }
   }, [routeGeometry, routeColor, routeWidth, routeOpacity]);
 
-  // ── Re-render markers + route when points or geometry change ───
+  // ── Re-render markers + route when points or geometry change ─────
   useEffect(() => {
     if (!mapReady) return;
     renderMarkers();
     updateRoute();
   }, [mapReady, points, routeGeometry]);
 
-  // ── Fit bounds on first load ────────────────────────────────────
+  // ── Fit bounds on first load ─────────────────────────────────────
   useEffect(() => {
     if (!mapReady || !fitBounds || initFlag.current) return;
     const map = mapRef.current;
@@ -434,21 +346,12 @@ export default function VietmapMap({
     if (valid.length < 2) return;
 
     initFlag.current = true;
-    let minLng = valid[0].lng, maxLng = valid[0].lng;
-    let minLat = valid[0].lat, maxLat = valid[0].lat;
-    valid.forEach(p => {
-      if (p.lng < minLng) minLng = p.lng;
-      if (p.lng > maxLng) maxLng = p.lng;
-      if (p.lat < minLat) minLat = p.lat;
-      if (p.lat > maxLat) maxLat = p.lat;
-    });
-    try {
-      map.fitBounds([[minLng, minLat], [maxLng, maxLat]],
-        { padding: 60, duration: 800, maxZoom: 14 });
-    } catch (_) { /* ignore */ }
+
+    const bounds = L.latLngBounds(valid.map(p => [p.lat, p.lng]));
+    map.fitBounds(bounds, { padding: [60, 60], maxZoom: 14, animate: true, duration: 800 });
   }, [mapReady, points, fitBounds]);
 
-  // ── Popup management ────────────────────────────────────────────
+  // ── Popup management ───────────────────────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -473,15 +376,16 @@ export default function VietmapMap({
     try {
       const popupHtml = buildPopupHTML(selectedPoint, tripOptions, selectedTripIdForAssign, assignLoading);
 
-      const popup = new maplibregl.Popup({ closeOnClick: false, maxWidth: '320px' })
-        .setLngLat([selectedPoint.lng, selectedPoint.lat])
-        .setHTML(popupHtml)
-        .addTo(map);
+      const popup = L.popup({ closeOnClick: false, maxWidth: 320, minWidth: 240 })
+        .setLatLng([selectedPoint.lat, selectedPoint.lng])
+        .setContent(popupHtml)
+        .openOn(map);
 
       popupRef.current = popup;
 
-      popup.once('open', () => {
-        const selectEl = document.getElementById('vietmap-popup-trip-select');
+      // Wire up interactive elements after popup opens
+      setTimeout(() => {
+        const selectEl = document.getElementById('leaflet-popup-trip-select');
         if (selectEl && onSelectTripForAssign) {
           selectEl.value = selectedTripIdForAssign || '';
           selectEl.addEventListener('change', (e) => {
@@ -489,39 +393,39 @@ export default function VietmapMap({
           });
         }
 
-        const assignBtn = document.getElementById('vietmap-popup-assign-btn');
+        const assignBtn = document.getElementById('leaflet-popup-assign-btn');
         if (assignBtn && onConfirmAssign) {
           assignBtn.addEventListener('click', () => {
             try { onConfirmAssign(); } catch (_) { /* ignore */ }
           });
         }
-      });
+      }, 50);
     } catch (err) {
       console.error('[VietmapMap] popup creation failed:', err);
     }
   }, [selectedPoint, tripOptions, selectedTripIdForAssign, assignLoading, onSelectTripForAssign, onConfirmAssign]);
 
-  // ── Force render fallback ────────────────────────────────────────
+  // ── Force render fallback ─────────────────────────────────────────
   useEffect(() => {
     if (forceRender === prevForceRef.current) return;
     prevForceRef.current = forceRender;
     if (!mapRef.current) return;
 
     for (const [, m] of markersRef.current.entries()) {
-      try { m.remove?.(); } catch (_) { /* ignore */ }
+      try { m.remove(); } catch (_) { /* ignore */ }
     }
     markersRef.current = new Map();
     renderMarkers();
   }, [forceRender, renderMarkers]);
 
-  // ── Cleanup on unmount ──────────────────────────────────────────
+  // ── Cleanup on unmount ────────────────────────────────────────────
   useEffect(() => {
     return () => {
       if (popupRef.current) {
         try { popupRef.current.remove(); } catch (_) { /* ignore */ }
       }
       for (const [, m] of markersRef.current.entries()) {
-        try { m.remove?.(); } catch (_) { /* ignore */ }
+        try { m.remove(); } catch (_) { /* ignore */ }
       }
       markersRef.current = new Map();
     };
@@ -531,13 +435,31 @@ export default function VietmapMap({
     <div style={{ position: 'relative', height, width: '100%' }}>
       <style>{`
         @keyframes vietmap-pulse {
-          0%,100% { transform: scale(1); opacity: 0.35; }
-          50% { transform: scale(1.15); opacity: 0.15; }
+          0%,100% { transform: scale(1); opacity: 0.3; }
+          50% { transform: scale(1.15); opacity: 0.1; }
         }
-        .vietmap-pin { pointer-events: auto; }
+        .leaflet-popup-content-wrapper {
+          border-radius: 8px !important;
+          box-shadow: 0 8px 24px rgba(0,0,0,0.15) !important;
+          padding: 0 !important;
+        }
+        .leaflet-popup-content {
+          margin: 14px 14px !important;
+        }
+        .leaflet-popup-close-button {
+          color: #6B7280 !important;
+          font-size: 18px !important;
+          top: 8px !important;
+          right: 10px !important;
+        }
+        .leaflet-container {
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
       `}</style>
-
-      <div ref={containerRef} style={{ height: '100%', width: '100%' }} />
+      <div
+        ref={containerRef}
+        style={{ height: '100%', width: '100%', borderRadius: '8px', overflow: 'hidden' }}
+      />
     </div>
   );
 }
