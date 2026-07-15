@@ -32,20 +32,24 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 const VIETMAP_TILE_KEY  = import.meta.env.VITE_VIETMAP_TILE_API_KEY || '';
 const VIETMAP_STYLE_URL = import.meta.env.VITE_VIETMAP_STYLE_URL     || '';
 const MAP_STYLE_URL     = import.meta.env.VITE_MAP_STYLE_URL          || '';
+const RAW_API_BASE      = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '').replace(/\/api$/, '');
+const VIETMAP_PROXY     = `${RAW_API_BASE}/api/vietmap`;
 
 function resolveStyle() {
-  if (MAP_STYLE_URL) {
-    // Allow custom style (e.g. OSM or any MapLibre-compatible style JSON)
-    return MAP_STYLE_URL;
-  }
+  if (MAP_STYLE_URL) return MAP_STYLE_URL;
+
   if (VIETMAP_TILE_KEY) {
-    // VietMap style JSON with tile key
+    // Proxy the style.json through our backend to hide the API key server-side
+    if (VIETMAP_PROXY && VIETMAP_STYLE_URL) {
+      // Our backend appends the key server-side
+      return `${VIETMAP_PROXY}/style?url=${encodeURIComponent(VIETMAP_STYLE_URL)}`;
+    }
     if (VIETMAP_STYLE_URL) {
       return `${VIETMAP_STYLE_URL}${VIETMAP_STYLE_URL.includes('?') ? '&' : '?'}apikey=${encodeURIComponent(VIETMAP_TILE_KEY)}`;
     }
-    return `https://maps.vietmap.vn/maps/styles/tm/style.json?apikey=${encodeURIComponent(VIETMAP_TILE_KEY)}`;
+    return `${VIETMAP_PROXY}/style.json?apikey=${encodeURIComponent(VIETMAP_TILE_KEY)}`;
   }
-  // Fallback: OpenFreeMap (OSM-based, free, no key needed)
+
   // eslint-disable-next-line no-console
   console.info('[VietmapMap] No tile key — using OpenFreeMap (OSM) tiles.');
   return 'https://tiles.openfreemap.org/styles/liberty';
@@ -196,6 +200,30 @@ export default function VietmapMap({
       style:     RESOLVED_STYLE,
       center:    [center.lng, center.lat],
       zoom,
+      transformRequest: (url, resourceType) => {
+        // Inject VietMap API key into all sub-resource requests.
+        // VietMap GL JS does this automatically; MapLibre is neutral.
+        if (typeof url !== 'string') return { url };
+
+        // Proxy VietMap resources through backend (hides key server-side, CORS-safe)
+        if (url.includes('maps.vietmap.vn') || url.includes('tile.vietmap.vn')) {
+          // Route through our proxy
+          if (VIETMAP_PROXY) {
+            const encodedUrl = encodeURIComponent(url);
+            // Proxy endpoints: /api/vietmap/tiles, /api/vietmap/fonts, /api/vietmap/sprites
+            const proxyPath = `${VIETMAP_PROXY}/${resourceType || 'tiles'}?url=${encodedUrl}`;
+            return { url: proxyPath, credentials: 'omit' };
+          }
+          // Fallback: append key directly to URL (key visible client-side)
+          if (VIETMAP_TILE_KEY) {
+            const sep = url.includes('?') ? '&' : '?';
+            if (!/[?&]apikey=[^&]+/i.test(url) && !/[?&]api_key=[^&]+/i.test(url)) {
+              return { url: `${url}${sep}apikey=${encodeURIComponent(VIETMAP_TILE_KEY)}` };
+            }
+          }
+        }
+        return { url };
+      },
     });
 
     map.addControl(new maplibregl.NavigationControl(), 'top-right');
