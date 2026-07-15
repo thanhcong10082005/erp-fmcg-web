@@ -340,7 +340,6 @@ export default function SalesOrdersPage({ token }) {
                                     <div className="order-form-body" style={{ position: 'relative' }}>
                                         <input
                                             type="text"
-                                            readOnly
                                             value={
                                                 form.partner_id
                                                     ? selectedPartnerDisplay
