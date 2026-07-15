@@ -85,7 +85,7 @@ function buildMarkerEl(point) {
     else if (weight >= 100) { size = 34; label = '🏪'; fontSize = 11; }
   }
 
-  const bgColor = (isAssigned && stopOrder) ? baseColor : '#6B7280';
+  const bgColor = baseColor;
   el.innerHTML = `
     <div style="width:${size}px;height:${size}px;background:${bgColor};border:3px solid #fff;border-radius:50%;
       display:flex;align-items:center;justify-content:center;font-size:${fontSize}px;font-weight:700;color:#fff;
