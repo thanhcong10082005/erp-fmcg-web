@@ -437,7 +437,7 @@ export default function SalesOrdersPage({ token }) {
                             </div>
 
                             {/* Line items */}
-                            <div style={{ border: '1px solid #E5E7EB', borderRadius: 8, overflow: 'hidden', marginBottom: 16 }}>
+                            <div style={{ border: '1px solid #E5E7EB', borderRadius: 8, overflow: 'visible', marginBottom: 16 }}>
                                 <div style={{
                                     background: '#F9FAFB', padding: '10px 16px',
                                     borderBottom: '1px solid #E5E7EB', display: 'flex',

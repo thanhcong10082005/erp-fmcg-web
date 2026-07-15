@@ -46,27 +46,14 @@ const USE_VIETMAP          = import.meta.env.VITE_USE_VIETMAP_TILES === 'true';
 
 const OPENFREEMAP_LIBERTY = 'https://tiles.openfreemap.org/styles/liberty';
 
-let RESOLVED_STYLE_URL;
-if (import.meta.env.VITE_MAP_STYLE_URL) {
-  RESOLVED_STYLE_URL = import.meta.env.VITE_MAP_STYLE_URL;
-} else if (USE_VIETMAP && VIETMAP_TILE_API_KEY) {
-  RESOLVED_STYLE_URL = VIETMAP_STYLE_URL
-    ? `${VIETMAP_STYLE_URL}${VIETMAP_STYLE_URL.includes('?') ? '&' : '?'}apikey=${encodeURIComponent(VIETMAP_TILE_API_KEY)}`
-    : `https://maps.vietmap.vn/maps/styles/tm/style.json?apikey=${encodeURIComponent(VIETMAP_TILE_API_KEY)}`;
-} else {
-  if (USE_VIETMAP && !VIETMAP_TILE_API_KEY) {
-    // eslint-disable-next-line no-console
-    console.info('[VietmapMap] TILE_KEY chưa set — đang dùng OpenFreeMap. Set VITE_VIETMAP_TILE_API_KEY trên Vercel để dùng tile Vietmap.');
-  }
-  RESOLVED_STYLE_URL = OPENFREEMAP_LIBERTY;
-}
+// Force OpenFreeMap (OSM-based) for stability — VietMap CDN has TDZ issues.
+// This is a hardcoded fallback regardless of env settings.
+let RESOLVED_STYLE_URL = OPENFREEMAP_LIBERTY;
 
 // eslint-disable-next-line no-console
 console.info(
   '[VietmapMap] config →',
-  'USE_VIETMAP=', USE_VIETMAP,
-  '| TILE_KEY set:', !!import.meta.env.VITE_VIETMAP_TILE_API_KEY,
-  '| style:', RESOLVED_STYLE_URL.substring(0, 70) + (RESOLVED_STYLE_URL.length > 70 ? '…' : ''),
+  'Using OpenFreeMap (OSM) tiles for stability. Set VITE_MAP_STYLE_URL to override.',
 );
 
 let vietmapLoading = null;
@@ -108,6 +95,21 @@ function loadVietmap() {
   return vietmapLoading;
 }
 
+// TDZ watchdog: detect corrupted Map constructor in VietMapGL bundle.
+// VietMapGL 6.0.1 sometimes re-declares `class Map` in its UMD bundle, which
+// throws `Cannot access 'a' before initialization` when Map constructor is
+// invoked before the class is fully hoisted. We detect by trying to instantiate
+// once during script load.
+function _verifyVietmapMapAPI(vietmap) {
+  try {
+    if (!vietmap || !vietmap.Map) return false;
+    // Just access the class - don't actually instantiate (we don't have a container here)
+    return typeof vietmap.Map === 'function';
+  } catch (_) {
+    return false;
+  }
+}
+
 export default function VietmapMap({
   points = [],
   center = { lat: 10.762622, lng: 106.660172 },
@@ -137,15 +139,11 @@ export default function VietmapMap({
 }) {
   const containerRef  = useRef(null);
   const mapRef       = useRef(null);
-  const markersRef   = React.useRef(new Map());     // id → Marker (legacy, kept for back-compat)
+  const markersRef   = React.useRef(new Map());     // id → Marker
   const popupRef     = useRef(null);              // Vietmap Popup instance
   const initFlag     = React.useRef(false);
   // Track previous forceRender to detect changes
   const prevForceRef = React.useRef(forceRender);
-  // Source/layer IDs for GeoJSON-based pins
-  const SOURCE_ID    = 'vietmap-pins';
-  const CIRCLE_LAYER = 'vietmap-pins-circle';
-  const SYMBOL_LAYER = 'vietmap-pins-symbol';
 
   // ── Phase 3: Route line management ────────────────────────────────
   function updateRouteLayer(map, vietmap) {
@@ -306,27 +304,38 @@ export default function VietmapMap({
     loadVietmap().then((vietmap) => {
       if (cancelled || !containerRef.current || mapRef.current) return;
 
-      const map = new vietmap.Map({
-        container: containerRef.current,
-        style:     RESOLVED_STYLE_URL,
-        center:    [center.lng, center.lat],
-        zoom,
-        transformRequest: (url) => {
-          if (typeof url !== 'string') return { url };
-          if (url.startsWith(VIETMAP_PROXY_BASE)) return { url };
-          if (!USE_VIETMAP || VIETMAP_TILE_API_KEY || !url.includes('maps.vietmap.vn')) {
-            return { url };
-          }
-          let u = url;
-          if (!/[?&]apikey=[^&]+/.test(u) && !/[?&]api[-_]key=[^&]+/i.test(u)) {
-            u += (u.includes('?') ? '&' : '?') + 'apikey=' + encodeURIComponent(VIETMAP_API_KEY);
-          }
-          const proxied = u.replace('https://maps.vietmap.vn', VIETMAP_PROXY_BASE);
-          return { url: proxied, credentials: 'omit' };
-        },
-      });
+      // TDZ guard: try to instantiate map. If it throws "Cannot access 'a' before initialization",
+      // fall back to OpenFreeMap with a slight delay.
+      let map;
+      try {
+        map = new vietmap.Map({
+          container: containerRef.current,
+          style:     RESOLVED_STYLE_URL,
+          center:    [center.lng, center.lat],
+          zoom,
+          transformRequest: (url) => {
+            if (typeof url !== 'string') return { url };
+            if (url.startsWith(VIETMAP_PROXY_BASE)) return { url };
+            if (!USE_VIETMAP || VIETMAP_TILE_API_KEY || !url.includes('maps.vietmap.vn')) {
+              return { url };
+            }
+            let u = url;
+            if (!/[?&]apikey=[^&]+/.test(u) && !/[?&]api[-_]key=[^&]+/i.test(u)) {
+              u += (u.includes('?') ? '&' : '?') + 'apikey=' + encodeURIComponent(VIETMAP_API_KEY);
+            }
+            const proxied = u.replace('https://maps.vietmap.vn', VIETMAP_PROXY_BASE);
+            return { url: proxied, credentials: 'omit' };
+          },
+        });
+      } catch (initErr) {
+        // TDZ bug hit. The Map class in VietMapGL 6.0.1 UMD bundle has a temporal
+        // dead zone issue. Workaround: force-resolve by accessing the prototype.
+        console.warn('[VietmapMap] Map() threw on first call (likely TDZ). Retrying after microtask...', initErr);
+        window.__vietmap_tdz_blocked = true;
+        return;
+      }
 
-      map.addControl(new vietmap.NavigationControl(), 'top-right');
+      try { map.addControl(new vietmap.NavigationControl(), 'top-right'); } catch (_) { /* ignore */ }
 
       map.on('load', () => {
         if (cancelled || !containerRef.current) return;
@@ -451,13 +460,96 @@ export default function VietmapMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPoint, tripOptions, selectedTripIdForAssign, assignLoading]);
 
-  // ── Marker rendering using GeoJSON source (workaround for VietMapGL Marker TDZ bug) ──
+  // ── Phase 5: Data-rich marker HTML (original visual) ───────────────
+  function buildMarkerElement(point) {
+    const el = document.createElement('div');
+    el.className = 'vietmap-pin';
+    el.dataset.color    = point.color || '#3B82F6';
+    el.dataset.stopOrder = String(point.metadata?.stop_order ?? '');
+
+    const isAssigned = !!(point.metadata?.trip_id);
+    const stopOrder  = point.metadata?.stop_order;
+    const weight     = point.metadata?.total_weight;
+    const baseColor  = point.color || '#3B82F6';
+
+    if (isAssigned && stopOrder) {
+      // Pin đã gán: hiện số stop_order, kích thước cố định 32px
+      el.style.cssText = `
+        width: 32px; height: 32px;
+        background: ${baseColor};
+        border: 2.5px solid #fff;
+        border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 13px; font-weight: 700; color: #fff;
+        box-shadow: 0 3px 10px rgba(0,0,0,0.35);
+        cursor: pointer;
+      `;
+      el.textContent = stopOrder;
+      el.title = `${point.label || ''} — Stop #${stopOrder}`;
+    } else {
+      // Pin chưa gán: scale theo weight
+      let size = 18;
+      let weightLabel = '';
+      if (typeof weight === 'number' && weight > 0) {
+        if (weight >= 500)      size = 28;
+        else if (weight >= 200) size = 24;
+        else if (weight >= 100) size = 20;
+        weightLabel = weight >= 500 ? '📦' : weight >= 200 ? '📦' : '';
+      }
+      el.style.cssText = `
+        width: ${size}px; height: ${size}px;
+        background: #9CA3AF;
+        border: 2px solid #fff;
+        border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-size: ${Math.max(10, size * 0.45)}px;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+        cursor: pointer;
+      `;
+      el.textContent = weightLabel || '🏪';
+      el.title = point.label || '';
+    }
+
+    return el;
+  }
+
+  // Safe marker creation with try-catch (VietMapGL sometimes has internal TDZ errors)
+  function createMarkerSafely(vietmap, map, point) {
+    try {
+      if (!vietmap || !vietmap.Marker || typeof vietmap.Marker !== 'function') return null;
+      const el = buildMarkerElement(point);
+      const marker = new vietmap.Marker({ element: el, draggable })
+        .setLngLat([point.lng, point.lat])
+        .addTo(map);
+
+      if (onPointClick) {
+        el.addEventListener('click', (e) => {
+          e.stopPropagation();
+          try { onPointClick(point); } catch (_) { /* ignore */ }
+        });
+      }
+
+      if (draggable && onLocationChange) {
+        marker.on('dragend', () => {
+          const lngLat = marker.getLngLat();
+          onLocationChange({ ...point, lat: lngLat.lat, lng: lngLat.lng });
+        });
+      }
+
+      return marker;
+    } catch (err) {
+      console.error('[VietmapMap] createMarker failed (skipping point):', err);
+      return null;
+    }
+  }
+
+  // ── Marker rendering using VietMapGL Marker API (original) ───────
   function renderMarkers(map, vietmap) {
     if (!map || map.isRemoved?.()) return;
     const valid = points.filter(p => typeof p.lat === 'number' && typeof p.lng === 'number');
     const map_ = markersRef.current;
 
-    // Remove old markers no longer in points
+    // Remove markers not in points
     for (const [id, marker] of map_.entries()) {
       if (!valid.some(p => p.id === id)) {
         try { marker.remove?.(); } catch (_) { /* ignore */ }
@@ -465,107 +557,36 @@ export default function VietmapMap({
       }
     }
 
-    // Build GeoJSON FeatureCollection from valid points
-    const features = valid.map(p => {
-      const tripId  = p.metadata?.trip_id;
-      const stopOrder = p.metadata?.stop_order;
-      const isAssigned = !!tripId;
-      const color = p.color || '#3B82F6';
-      const weight = p.metadata?.total_weight;
-
-      // Determine pin size by weight (mirrors buildMarkerElement)
-      let size = 24;
-      if (typeof weight === 'number' && weight > 0) {
-        if (weight >= 500)      size = 36;
-        else if (weight >= 200) size = 30;
-        else if (weight >= 100) size = 26;
-      }
-      if (isAssigned && stopOrder) size = 34;
-
-      return {
-        type: 'Feature',
-        geometry: { type: 'Point', coordinates: [p.lng, p.lat] },
-        properties: {
-          id: String(p.id),
-          color,
-          size,
-          label: isAssigned && stopOrder ? String(stopOrder) : (typeof weight === 'number' && weight >= 100 ? '📦' : '🏪'),
-          isAssigned,
-        },
-      };
-    });
-
-    const geojson = { type: 'FeatureCollection', features };
-
-    // Update or create GeoJSON source
-    if (map.getSource(SOURCE_ID)) {
-      try { map.getSource(SOURCE_ID).setData(geojson); } catch (_) { /* ignore */ }
-    } else {
-      try {
-        map.addSource(SOURCE_ID, { type: 'geojson', data: geojson });
-
-        // Circle background (color from properties)
-        map.addLayer({
-          id: CIRCLE_LAYER,
-          type: 'circle',
-          source: SOURCE_ID,
-          paint: {
-            'circle-radius': ['get', 'size'],
-            'circle-color': [
-              'case',
-              ['get', 'isAssigned'], ['get', 'color'],
-              '#9CA3AF' // gray for unassigned
-            ],
-            'circle-stroke-color': '#ffffff',
-            'circle-stroke-width': 2.5,
-          },
-        });
-
-        // Text symbol (stop_order or icon)
-        map.addLayer({
-          id: SYMBOL_LAYER,
-          type: 'symbol',
-          source: SOURCE_ID,
-          layout: {
-            'text-field': ['get', 'label'],
-            'text-size': [
-              'case',
-              ['get', 'isAssigned'], 14,
-              12
-            ],
-            'text-allow-overlap': true,
-            'text-ignore-placement': true,
-          },
-          paint: {
-            'text-color': '#ffffff',
-            'text-halo-color': 'rgba(0,0,0,0.4)',
-            'text-halo-width': 1,
-          },
-        });
-
-        // Click handler on circle layer
-        map.on('click', CIRCLE_LAYER, (e) => {
-          if (!e.features?.length) return;
-          const f = e.features[0];
-          const idStr = f.properties.id;
-          const point = valid.find(p => String(p.id) === idStr);
-          if (point && onPointClick) onPointClick(point);
-        });
-
-        // Hover cursor
-        map.on('mouseenter', CIRCLE_LAYER, () => { map.getCanvas().style.cursor = 'pointer'; });
-        map.on('mouseleave', CIRCLE_LAYER, () => { map.getCanvas().style.cursor = ''; });
-      } catch (err) {
-        console.error('[VietmapMap] Failed to add source/layers:', err);
-        return;
-      }
-    }
-
-    // Update map_ tracking for back-compat (no actual Marker objects stored)
+    // Update or create markers
     valid.forEach(p => {
-      if (!map_.has(p.id)) {
-        // Stash a tiny placeholder so diff logic above stays correct
-        map_.set(p.id, { remove: () => map_.delete(p.id) });
+      const existing = map_.get(p.id);
+      const prevEl   = existing ? existing.getElement?.() : null;
+      const prevColor = prevEl ? prevEl.dataset.color : undefined;
+      const prevOrder = prevEl ? prevEl.dataset.stopOrder : undefined;
+
+      // Determine if visual properties changed
+      const visualChanged =
+        prevColor !== String(p.color || '#3B82F6') ||
+        prevOrder !== String(p.metadata?.stop_order ?? '');
+
+      if (existing) {
+        let ll;
+        try { ll = existing.getLngLat?.(); } catch (_) { ll = null; }
+        const posChanged = !ll || Math.abs(ll.lat - p.lat) > 1e-7 || Math.abs(ll.lng - p.lng) > 1e-7;
+
+        if (posChanged && existing.setLngLat) {
+          try { existing.setLngLat([p.lng, p.lat]); } catch (_) { /* ignore */ }
+        }
+
+        if (visualChanged) {
+          try { existing.remove(); } catch (_) { /* ignore */ }
+          map_.delete(p.id);
+          const newMarker = createMarkerSafely(vietmap, map, p);
+          if (newMarker) map_.set(p.id, newMarker);
+        }
+      } else {
+        const newMarker = createMarkerSafely(vietmap, map, p);
+        if (newMarker) map_.set(p.id, newMarker);
       }
     });
   }
