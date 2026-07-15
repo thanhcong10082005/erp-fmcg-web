@@ -1,98 +1,66 @@
 /**
- * VietmapMap — VietMap GL JS via dynamic CDN import.
+ * VietmapMap — VietMap GL JS via CDN script injection.
  *
  * APPROACH:
- *   Load VietMap GL JS from CDN as a module dynamically (not a <script> tag).
- *   This avoids the TDZ/IIFE global collision bug that occurs when the UMD
- *   bundle is loaded synchronously before other JS has initialized.
+ *   Inject <link> + <script> for VietMap GL JS UMD bundle, then resolve
+ *   when the global `vietmapgl` is available. No ESM import, no dynamic
+ *   import(), no TDZ issues — just plain script loading.
  *
  *   VietMap GL JS auto-injects the API key into every sub-resource request
- *   (tiles, fonts, sprites, icons) — no manual key injection needed.
+ *   (tiles, fonts, sprites, icons) — no manual transformRequest needed.
  */
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 
 // ── Config ─────────────────────────────────────────────────────────
-const VIETMAP_KEY      = import.meta.env.VITE_VIETMAP_TILE_API_KEY || '';
-const VIETMAP_STYLE    = import.meta.env.VITE_VIETMAP_STYLE_URL     || '';
-const VIETMAP_CSS_CDN  = 'https://unpkg.com/@vietmap/vietmap-gl-js@6.0.1/dist/vietmap-gl.css';
-const VIETMAP_JS_CDN   = 'https://unpkg.com/@vietmap/vietmap-gl-js@6.0.1/dist/vietmap-gl.js';
+const VIETMAP_KEY     = import.meta.env.VITE_VIETMAP_TILE_API_KEY || '';
+const VIETMAP_STYLE   = import.meta.env.VITE_VIETMAP_STYLE_URL     || '';
+const VIETMAP_CSS_URL = 'https://unpkg.com/@vietmap/vietmap-gl-js@6.0.1/dist/vietmap-gl.css';
+const VIETMAP_JS_URL  = 'https://unpkg.com/@vietmap/vietmap-gl-js@6.0.1/dist/vietmap-gl.js';
 
 const MAP_STYLE = VIETMAP_STYLE
   ? `${VIETMAP_STYLE}${VIETMAP_STYLE.includes('?') ? '&' : '?'}apikey=${VIETMAP_KEY}`
   : `https://maps.vietmap.vn/maps/styles/tm/style.json?apikey=${VIETMAP_KEY}`;
 
-// ── Load VietMap GL JS once (singleton) ────────────────────────────
-let _vietmapLoadPromise = null;
+// ── Load VietMap GL JS once (singleton) ───────────────────────────
+let _loadPromise = null;
 
-function loadVietmapGL() {
-  if (_vietmapLoadPromise) return _vietmapLoadPromise;
+function ensureVietmapGL() {
+  if (_loadPromise) return _loadPromise;
 
-  _vietmapLoadPromise = new Promise((resolve, reject) => {
-    // 1. Inject CSS if not already present
-    if (!document.querySelector(`link[href="${VIETMAP_CSS_CDN}"]`)) {
+  _loadPromise = new Promise((resolve, reject) => {
+    // Inject CSS if missing
+    if (!document.querySelector(`link[href="${VIETMAP_CSS_URL}"]`)) {
       const link = document.createElement('link');
       link.rel = 'stylesheet';
-      link.href = VIETMAP_CSS_CDN;
+      link.href = VIETMAP_CSS_URL;
       document.head.appendChild(link);
     }
 
-    // 2. Load JS as a module script (avoids IIFE/TDZ global pollution)
+    // Already loaded?
+    if (window.vietmapgl) {
+      resolve(window.vietmapgl);
+      return;
+    }
+
+    // Listen for the global
     const script = document.createElement('script');
-    script.type = 'module';
-
-    // The module simply re-exports from the UMD global that gets set up
-    // We use a workaround: import from the CDN as an ES module directly
-    script.textContent = `
-      import * as VM from '${VIETMAP_JS_CDN.replace('.js', '.esm.js')}';
-      window.__vietmapGL = VM;
-    `;
-
-    // Fallback: if no ESM build, grab the global after UMD loads
-    script.onerror = () => {
-      const fallback = document.createElement('script');
-      fallback.src = VIETMAP_JS_CDN;
-      fallback.onload = () => {
+    script.src = VIETMAP_JS_URL;
+    script.onload = () => {
+      // Give the UMD IIFE a tick to execute
+      setTimeout(() => {
         if (window.vietmapgl) {
-          window.__vietmapGL = window.vietmapgl;
           resolve(window.vietmapgl);
         } else {
-          reject(new Error('VietMap GL JS failed to load (no global, no ESM)'));
+          reject(new Error('vietmapgl global not set after script load'));
         }
-      };
-      fallback.onerror = reject;
-      document.head.appendChild(fallback);
+      }, 0);
     };
-
-    // Try ESM import first
-    import(VIETMAP_JS_CDN)
-      .then((mod) => {
-        if (mod && mod.Map) {
-          window.__vietmapGL = mod;
-          resolve(mod);
-        } else {
-          throw new Error('ESM export missing Map');
-        }
-      })
-      .catch(() => {
-        // ESM failed, use UMD fallback
-        document.head.appendChild(fallback || script);
-      });
-
-    // Actually append the fallback script for UMD
-    const umdmScript = document.createElement('script');
-    umdmScript.src = VIETMAP_JS_CDN;
-    umdmScript.onload = () => {
-      if (window.vietmapgl && !window.__vietmapGL) {
-        window.__vietmapGL = window.vietmapgl;
-        resolve(window.vietmapgl);
-      }
-    };
-    umdmScript.onerror = reject;
-    document.head.appendChild(umdmScript);
+    script.onerror = () => reject(new Error(`Failed to load ${VIETMAP_JS_URL}`));
+    document.head.appendChild(script);
   });
 
-  return _vietmapLoadPromise;
+  return _loadPromise;
 }
 
 // ── Build marker DOM element ───────────────────────────────────────
@@ -175,7 +143,6 @@ export default function VietmapMap({
   routeWidth = 4,
   routeOpacity = 0.8,
   selectedPoint = null,
-  onAssignRequest,
   tripOptions = [],
   selectedTripIdForAssign = '',
   onSelectTripForAssign,
@@ -191,6 +158,7 @@ export default function VietmapMap({
   const initFlag        = useRef(false);
   const prevForceRef    = useRef(forceRender);
   const prevSelectedRef = useRef(null);
+
   const [mapReady, setMapReady] = useState(false);
   const [libError, setLibError] = useState(null);
 
@@ -199,26 +167,17 @@ export default function VietmapMap({
     if (!containerRef.current || mapRef.current) return;
     let cancelled = false;
 
-    async function init() {
-      try {
-        const VietmapGL = await loadVietmapGL();
+    ensureVietmapGL()
+      .then((VietmapGL) => {
         if (cancelled || !containerRef.current || mapRef.current) return;
 
-        // Inject CSS
-        if (!document.querySelector(`link[href="${VIETMAP_CSS_CDN}"]`)) {
-          const link = document.createElement('link');
-          link.rel = 'stylesheet';
-          link.href = VIETMAP_CSS_CDN;
-          document.head.appendChild(link);
-        }
-
         // eslint-disable-next-line no-console
-        console.info('[VietmapMap] VietMap GL loaded, creating map with style:', MAP_STYLE);
+        console.info('[VietmapMap] VietMap GL ready, style:', MAP_STYLE);
 
         const map = new VietmapGL.Map({
           container: containerRef.current,
           style: MAP_STYLE,
-          center: [center.lng, center.lat],
+          center: [center.lng, center.lat], // [lng, lat] — GeoJSON order
           zoom,
           zoomControl: true,
           vietmapLogo: false,
@@ -237,18 +196,17 @@ export default function VietmapMap({
 
         map.on('error', (e) => {
           const msg = e?.error?.message || e?.error?.id || '';
-          // eslint-disable-next-line no-console
-          if (msg) console.warn('[VietmapMap] map error:', msg);
+          if (msg && msg !== 'http') {
+            // eslint-disable-next-line no-console
+            console.warn('[VietmapMap] map error:', msg);
+          }
         });
-
-      } catch (err) {
+      })
+      .catch((err) => {
         // eslint-disable-next-line no-console
-        console.error('[VietmapMap] Failed to load VietMap GL JS:', err);
+        console.error('[VietmapMap] load error:', err);
         if (!cancelled) setLibError(err.message || 'Failed to load map library');
-      }
-    }
-
-    init();
+      });
 
     return () => {
       cancelled = true;
@@ -273,9 +231,13 @@ export default function VietmapMap({
     const map = mapRef.current;
     if (!map || map.isRemoved?.()) return;
 
+    // Wait for map to be fully ready
+    if (!map.isStyleLoaded?.()) return;
+
     const valid = points.filter(p => typeof p.lat === 'number' && typeof p.lng === 'number');
     const map_ = markersRef.current;
 
+    // Remove stale markers
     for (const [id, marker] of map_.entries()) {
       if (!valid.some(p => p.id === id)) {
         try { marker.remove(); } catch (_) { /* ignore */ }
@@ -283,26 +245,33 @@ export default function VietmapMap({
       }
     }
 
+    // Add / update markers
     valid.forEach(p => {
       const existing = map_.get(p.id);
+
       if (existing) {
+        // Reposition if lat/lng changed
         const ll = existing.getLngLat();
-        if (Math.abs(ll.lat - p.lat) > 1e-7 || Math.abs(ll.lng - p.lng) > 1e-7) {
-          existing.setLngLat([p.lng, p.lat]);
+        if (Math.abs(ll.lat - p.lat) > 1e-9 || Math.abs(ll.lng - p.lng) > 1e-9) {
+          try { existing.setLngLat([p.lng, p.lat]); } catch (_) { /* ignore */ }
         }
         return;
       }
+
       try {
         const el = buildMarkerEl(p);
-        const VM = window.__vietmapGL;
-        const Marker = VM.Marker;
-        const marker = new Marker({ element: el, draggable: !!draggable })
-          .setLngLat([p.lng, p.lat])
+        const VM = window.vietmapgl;
+        const marker = new VM.Marker({ element: el, draggable: !!draggable })
+          .setLngLat([p.lng, p.lat]) // [lng, lat] order
           .addTo(map);
 
         if (onPointClick) {
-          el.addEventListener('click', (e) => { e.stopPropagation(); try { onPointClick(p); } catch (_) { /* ignore */ } });
+          el.addEventListener('click', (e) => {
+            e.stopPropagation();
+            try { onPointClick(p); } catch (_) { /* ignore */ }
+          });
         }
+
         if (draggable && onLocationChange) {
           marker.on('dragend', () => {
             try {
@@ -311,6 +280,7 @@ export default function VietmapMap({
             } catch (_) { /* ignore */ }
           });
         }
+
         map_.set(p.id, marker);
       } catch (err) {
         console.error('[VietmapMap] marker error:', err);
@@ -321,7 +291,9 @@ export default function VietmapMap({
   // ── Update route ────────────────────────────────────────────────
   const updateRoute = useCallback(() => {
     const map = mapRef.current;
-    if (!map) return;
+    if (!map || map.isRemoved?.()) return;
+    if (!map.isStyleLoaded?.()) return;
+
     const SOURCE = 'planned-route', LAYER = 'planned-route-layer', OUTL = 'planned-route-outline';
 
     if (!routeGeometry || routeGeometry.type !== 'LineString' || !routeGeometry.coordinates?.length) {
@@ -347,13 +319,14 @@ export default function VietmapMap({
     }
   }, [routeGeometry, routeColor, routeWidth, routeOpacity]);
 
+  // ── Re-render when data changes ──────────────────────────────────
   useEffect(() => {
     if (!mapReady) return;
     renderMarkers();
     updateRoute();
   }, [mapReady, points, routeGeometry]);
 
-  // ── Fit bounds ──────────────────────────────────────────────────
+  // ── Fit bounds on first load ─────────────────────────────────────
   useEffect(() => {
     if (!mapReady || !fitBounds || initFlag.current) return;
     const map = mapRef.current;
@@ -377,7 +350,8 @@ export default function VietmapMap({
   // ── Popup ────────────────────────────────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
+    if (!map || !mapReady) return;
+
     if (!selectedPoint) {
       if (popupRef.current) { try { popupRef.current.remove(); } catch (_) { /* ignore */ } popupRef.current = null; }
       prevSelectedRef.current = null;
@@ -385,16 +359,19 @@ export default function VietmapMap({
     }
     if (prevSelectedRef.current?.id === selectedPoint.id) return;
     prevSelectedRef.current = selectedPoint;
+
     if (popupRef.current) { try { popupRef.current.remove(); } catch (_) { /* ignore */ } popupRef.current = null; }
+
     try {
-      const VM = window.__vietmapGL;
-      const Popup = VM.Popup;
+      const VM = window.vietmapgl;
       const popupHtml = buildPopupHTML(selectedPoint, tripOptions, selectedTripIdForAssign, assignLoading);
-      const popup = new Popup({ closeOnClick: false, maxWidth: '320px' })
+      const popup = new VM.Popup({ closeOnClick: false, maxWidth: '320px' })
         .setLngLat([selectedPoint.lng, selectedPoint.lat])
         .setHTML(popupHtml)
         .addTo(map);
+
       popupRef.current = popup;
+
       popup.once('open', () => {
         setTimeout(() => {
           const selectEl = document.getElementById('vietmap-popup-trip-select');
@@ -411,7 +388,7 @@ export default function VietmapMap({
     } catch (err) {
       console.error('[VietmapMap] popup error:', err);
     }
-  }, [selectedPoint, tripOptions, selectedTripIdForAssign, assignLoading, onSelectTripForAssign, onConfirmAssign]);
+  }, [selectedPoint, mapReady, tripOptions, selectedTripIdForAssign, assignLoading, onSelectTripForAssign, onConfirmAssign]);
 
   // ── Force render ────────────────────────────────────────────────
   useEffect(() => {
@@ -442,12 +419,12 @@ export default function VietmapMap({
           color: #6B7280 !important; font-size: 18px !important;
           top: 8px !important; right: 10px !important;
         }
-        ${libError ? '' : ''}
       `}</style>
       {libError && (
         <div style={{
           position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-          background: '#f9fafb', color: '#dc2626', fontFamily: 'system-ui', fontSize: 14, zIndex: 10, textAlign: 'center', padding: 16,
+          background: '#f9fafb', color: '#dc2626', fontFamily: 'system-ui', fontSize: 14, zIndex: 10,
+          textAlign: 'center', padding: 16,
         }}>
           <div>
             <div style="font-size:20px;margin-bottom:8px;">⚠️</div>
