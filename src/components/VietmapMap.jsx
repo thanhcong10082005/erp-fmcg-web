@@ -30,35 +30,70 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 
 // ── Tile / Style config ───────────────────────────────────────────
 const VIETMAP_TILE_KEY  = import.meta.env.VITE_VIETMAP_TILE_API_KEY || '';
-const VIETMAP_STYLE_URL = import.meta.env.VITE_VIETMAP_STYLE_URL     || '';
-const MAP_STYLE_URL     = import.meta.env.VITE_MAP_STYLE_URL          || '';
-const RAW_API_BASE      = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '').replace(/\/api$/, '');
-const VIETMAP_PROXY     = `${RAW_API_BASE}/api/vietmap`;
+const VIETMAP_STYLE_URL = import.meta.env.VITE_VIETMAP_STYLE_URL || '';
+const MAP_STYLE_URL     = import.meta.env.VITE_MAP_STYLE_URL || '';
 
-function resolveStyle() {
-  if (MAP_STYLE_URL) return MAP_STYLE_URL;
+// ── Load and patch style JSON ───────────────────────────────────────
+// Fetch style.json with API key, then inject key into all tile/font/sprite URLs
+// so that MapLibre can use them without a proxy server.
+async function fetchPatchedStyle() {
+  let styleUrl;
 
-  if (VIETMAP_TILE_KEY) {
-    // Proxy the style.json through our backend to hide the API key server-side
-    if (VIETMAP_PROXY && VIETMAP_STYLE_URL) {
-      // Our backend appends the key server-side
-      return `${VIETMAP_PROXY}/style?url=${encodeURIComponent(VIETMAP_STYLE_URL)}`;
-    }
+  if (MAP_STYLE_URL) {
+    styleUrl = MAP_STYLE_URL;
+  } else if (VIETMAP_TILE_KEY) {
     if (VIETMAP_STYLE_URL) {
-      return `${VIETMAP_STYLE_URL}${VIETMAP_STYLE_URL.includes('?') ? '&' : '?'}apikey=${encodeURIComponent(VIETMAP_TILE_KEY)}`;
+      styleUrl = `${VIETMAP_STYLE_URL}${VIETMAP_STYLE_URL.includes('?') ? '&' : '?'}apikey=${encodeURIComponent(VIETMAP_TILE_KEY)}`;
+    } else {
+      styleUrl = `https://maps.vietmap.vn/maps/styles/tm/style.json?apikey=${encodeURIComponent(VIETMAP_TILE_KEY)}`;
     }
-    return `${VIETMAP_PROXY}/style.json?apikey=${encodeURIComponent(VIETMAP_TILE_KEY)}`;
+  } else {
+    // eslint-disable-next-line no-console
+    console.info('[VietmapMap] No tile key — using OpenFreeMap (OSM) tiles.');
+    return { type: 'style', json: null, url: 'https://tiles.openfreemap.org/styles/liberty' };
   }
 
-  // eslint-disable-next-line no-console
-  console.info('[VietmapMap] No tile key — using OpenFreeMap (OSM) tiles.');
-  return 'https://tiles.openfreemap.org/styles/liberty';
+  try {
+    const resp = await fetch(styleUrl);
+    if (!resp.ok) throw new Error(`style fetch failed: ${resp.status}`);
+    const style = await resp.json();
+
+    // Inject apikey into every URL that belongs to VietMap
+    const patch = (u) => {
+      if (typeof u !== 'string') return u;
+      if (!u.includes('maps.vietmap.vn') && !u.includes('tile.vietmap.vn')) return u;
+      if (/[?&]apikey=[^&]+/i.test(u)) return u; // already has key
+      const sep = u.includes('?') ? '&' : '?';
+      return `${u}${sep}apikey=${encodeURIComponent(VIETMAP_TILE_KEY)}`;
+    };
+
+    if (style.sources) {
+      for (const src of Object.values(style.sources)) {
+        if (src.url) src.url = patch(src.url);
+        if (src.tiles) src.tiles = src.tiles.map(patch);
+        if (src.tilejson) src.tilejson = patch(src.tilejson);
+      }
+    }
+    if (style.glyphs) style.glyphs = patch(style.glyphs);
+    if (style.sprite) style.sprite = patch(style.sprite);
+
+    return { type: 'style', json: style, url: null };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[VietmapMap] Failed to fetch/patch style.json:', err);
+    return { type: 'style', json: null, url: null };
+  }
 }
 
-const RESOLVED_STYLE = resolveStyle();
+// Cache for pre-fetched style so we don't re-fetch on every re-render
+let _styleCache = null;
+let _stylePromise = null;
 
-// eslint-disable-next-line no-console
-console.info('[VietmapMap] Tile style:', RESOLVED_STYLE);
+function getStyleData() {
+  if (_styleCache) return Promise.resolve(_styleCache);
+  if (!_stylePromise) _stylePromise = fetchPatchedStyle().then(d => { _styleCache = d; return d; });
+  return _stylePromise;
+}
 
 // ── Build marker DOM element ──────────────────────────────────────
 function buildMarkerEl(point) {
@@ -195,61 +230,73 @@ export default function VietmapMap({
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
 
-    const map = new maplibregl.Map({
-      container: containerRef.current,
-      style:     RESOLVED_STYLE,
-      center:    [center.lng, center.lat],
-      zoom,
-      transformRequest: (url, resourceType) => {
-        // Inject VietMap API key into all sub-resource requests.
-        // VietMap GL JS does this automatically; MapLibre is neutral.
-        if (typeof url !== 'string') return { url };
+    let cancelled = false;
 
-        // Proxy VietMap resources through backend (hides key server-side, CORS-safe)
-        if (url.includes('maps.vietmap.vn') || url.includes('tile.vietmap.vn')) {
-          // Route through our proxy
-          if (VIETMAP_PROXY) {
-            const encodedUrl = encodeURIComponent(url);
-            // Proxy endpoints: /api/vietmap/tiles, /api/vietmap/fonts, /api/vietmap/sprites
-            const proxyPath = `${VIETMAP_PROXY}/${resourceType || 'tiles'}?url=${encodedUrl}`;
-            return { url: proxyPath, credentials: 'omit' };
-          }
-          // Fallback: append key directly to URL (key visible client-side)
-          if (VIETMAP_TILE_KEY) {
+    async function initMap() {
+      const { type, json: patchedStyle, url: fallbackUrl } = await getStyleData();
+      if (cancelled || !containerRef.current || mapRef.current) return;
+
+      const styleToUse = (type === 'style' && patchedStyle) ? patchedStyle : fallbackUrl;
+
+      // eslint-disable-next-line no-console
+      console.info('[VietmapMap] Loading map with style:', styleToUse);
+
+      const map = new maplibregl.Map({
+        container: containerRef.current,
+        style: styleToUse,
+        center: [center.lng, center.lat],
+        zoom,
+        // Belt-and-suspenders: also intercept every sub-request
+        transformRequest: (url, resourceType) => {
+          if (typeof url !== 'string') return { url };
+          // Inject key into any VietMap URL that slipped through the patch
+          if ((url.includes('maps.vietmap.vn') || url.includes('tile.vietmap.vn'))) {
+            if (/[?&]apikey=[^&]+/i.test(url)) return { url };
             const sep = url.includes('?') ? '&' : '?';
-            if (!/[?&]apikey=[^&]+/i.test(url) && !/[?&]api_key=[^&]+/i.test(url)) {
-              return { url: `${url}${sep}apikey=${encodeURIComponent(VIETMAP_TILE_KEY)}` };
-            }
+            return { url: `${url}${sep}apikey=${encodeURIComponent(VIETMAP_TILE_KEY)}` };
           }
+          return { url };
+        },
+      });
+
+      map.addControl(new maplibregl.NavigationControl(), 'top-right');
+
+      map.on('load', () => {
+        if (cancelled) return;
+        mapRef.current = map;
+        setMapReady(true);
+        if (onMapReady) {
+          try { onMapReady(map); } catch (_) { /* ignore */ }
         }
-        return { url };
-      },
-    });
+      });
 
-    map.addControl(new maplibregl.NavigationControl(), 'top-right');
+      map.on('error', (e) => {
+        const errId = e?.error?.id || '';
+        const isTile = ['http', 'tiles', 'socket', 'webgl', 'raster', 'source'].includes(errId);
+        if (isTile) {
+          // eslint-disable-next-line no-console
+          console.warn('[VietmapMap] tile/resource error (non-fatal):', errId);
+        } else if (errId) {
+          // eslint-disable-next-line no-console
+          console.error('[VietmapMap] map error:', errId, e?.error?.message);
+        }
+      });
 
-    map.on('load', () => {
-      mapRef.current = map;
-      setMapReady(true);
-      if (onMapReady) {
-        try { onMapReady(map); } catch (_) { /* ignore */ }
-      }
-    });
+      return map;
+    }
 
-    map.on('error', (e) => {
-      const errId = e?.error?.id || '';
-      const isTile = ['http', 'tiles', 'socket', 'webgl', 'raster', 'source'].includes(errId);
-      if (isTile) {
-        // eslint-disable-next-line no-console
-        console.warn('[VietmapMap] tile/resource error (non-fatal):', errId);
-      } else if (errId) {
-        // eslint-disable-next-line no-console
-        console.error('[VietmapMap] map error:', errId, e?.error?.message);
-      }
-    });
+    const mapOrPromise = initMap();
 
     return () => {
-      if (mapRef.current) {
+      cancelled = true;
+      if (mapOrPromise && typeof mapOrPromise === 'object' && mapOrPromise.then) {
+        mapOrPromise.then((map) => {
+          if (map && mapRef.current) {
+            try { mapRef.current.remove(); } catch (_) { /* ignore */ }
+            mapRef.current = null;
+          }
+        }).catch(() => {/* ignore cancel */});
+      } else if (mapOrPromise && mapRef.current) {
         try { mapRef.current.remove(); } catch (_) { /* ignore */ }
         mapRef.current = null;
       }
