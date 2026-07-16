@@ -49,6 +49,7 @@ export default function DispatcherMapPage({ token, userRole }) {
     const [routeGeometry, setRouteGeometry]   = useState(null);
     const [routeDistance, setRouteDistance]  = useState(0);
     const [routeLoading, setRouteLoading]   = useState(false);
+    const [tripOrders, setTripOrders]         = useState([]);
 
     // ── Phase 2: TSP optimization ─────────────────────────────
     const [optimizing, setOptimizing]       = useState(false);
@@ -91,10 +92,25 @@ export default function DispatcherMapPage({ token, userRole }) {
     // ── Client-side filter: trip + search text + geocoding confidence ─
     const filteredPoints = React.useMemo(() => {
         const q = searchText.trim().toLowerCase();
+        // Build set of partner_ids trong trip đang chọn (nếu có)
+        const tripPartnerIds = new Set<string>();
+        if (selectedTripId && tripOrders.length > 0) {
+            tripOrders.forEach((o: any) => {
+                const pid = String(o.partner_id);
+                if (pid) tripPartnerIds.add(pid);
+            });
+        }
         return points.filter(p => {
-            // Trip filter: when a trip is selected, show only its partners
+            // Trip filter: khi có trip được chọn, hiển thị partners trong tripOrders
             if (selectedTripId) {
-                if (String(p.metadata?.trip_id) !== String(selectedTripId)) return false;
+                // p.id là partner_id sau transform, hoặc dùng metadata
+                const pid = String(p.id || p.metadata?.partner_id || '');
+                if (tripPartnerIds.size > 0) {
+                    if (!tripPartnerIds.has(pid)) return false;
+                } else {
+                    // Fallback: dùng metadata.trip_id
+                    if (String(p.metadata?.trip_id) !== String(selectedTripId)) return false;
+                }
             }
             // Search filter
             if (q) {
@@ -118,7 +134,7 @@ export default function DispatcherMapPage({ token, userRole }) {
             }
             return true;
         });
-    }, [points, searchText, filters.geoConfidence, selectedTripId]);
+    }, [points, searchText, filters.geoConfidence, selectedTripId, tripOrders]);
 
     // ── Load partners + trips ────────────────────────────────────
     // IMPORTANT: loadAll KHÔNG phụ thuộc partnerToTripMap/partnerMetaMap
@@ -198,12 +214,17 @@ export default function DispatcherMapPage({ token, userRole }) {
         setRouteLoading(true);
         try {
             const r = await apiCall('GET', `/vietmap/trips/${tripId}/route`, null, token);
-            console.log(`[DispatcherMap] fetch route success: geometry=${r.geometry ? 'present' : 'null'}, distance=${r.distance_m}`);
+            console.log(`[DispatcherMap] fetch route success: geometry=${r.geometry ? 'present' : 'null'}, distance=${r.distance_m}, orders=${r.orders?.length || 0}`);
             setRouteGeometry(r.geometry || null);
             setRouteDistance(r.distance_m || 0);
+            // Cập nhật tripOrders cho trip đang chọn - dùng để filter markers
+            if (r.orders && Array.isArray(r.orders)) {
+                setTripOrders(r.orders);
+            }
         } catch (e) {
             console.error('[DispatcherMap] fetch route failed:', e.message, 'status:', e.status, 'response:', e.response);
             setRouteGeometry(null);
+            setTripOrders([]);
         } finally {
             setRouteLoading(false);
         }
@@ -215,6 +236,7 @@ export default function DispatcherMapPage({ token, userRole }) {
         } else {
             setRouteGeometry(null);
             setRouteDistance(0);
+            setTripOrders([]);
         }
     }, [selectedTripId, fetchTripRoute]);
 
@@ -515,7 +537,7 @@ export default function DispatcherMapPage({ token, userRole }) {
                         points={filteredPoints}
                         height="650px"
                         fitBounds={true}
-                        boundsKey={selectedTripId}
+                        boundsKey={selectedTripId ? `${selectedTripId}-${tripOrders.length}` : undefined}
                         draggable={canEdit}
                         onPointClick={setSelectedPoint}
                         onLocationChange={handleLocationChange}
