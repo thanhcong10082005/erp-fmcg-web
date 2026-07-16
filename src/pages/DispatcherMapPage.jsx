@@ -93,9 +93,9 @@ export default function DispatcherMapPage({ token, userRole }) {
     const filteredPoints = React.useMemo(() => {
         const q = searchText.trim().toLowerCase();
         // Build set of partner_ids trong trip đang chọn (nếu có)
-        const tripPartnerIds = new Set<string>();
+        const tripPartnerIds = new Set();
         if (selectedTripId && tripOrders.length > 0) {
-            tripOrders.forEach((o: any) => {
+            tripOrders.forEach((o) => {
                 const pid = String(o.partner_id);
                 if (pid) tripPartnerIds.add(pid);
             });
@@ -104,24 +104,24 @@ export default function DispatcherMapPage({ token, userRole }) {
             // Trip filter: khi có trip được chọn, hiển thị partners trong tripOrders
             if (selectedTripId) {
                 // p.id là partner_id sau transform, hoặc dùng metadata
-                const pid = String(p.id || p.metadata?.partner_id || '');
+                const pid = String(p.id || (p.metadata && p.metadata.partner_id) || '');
                 if (tripPartnerIds.size > 0) {
                     if (!tripPartnerIds.has(pid)) return false;
                 } else {
                     // Fallback: dùng metadata.trip_id
-                    if (String(p.metadata?.trip_id) !== String(selectedTripId)) return false;
+                    if (String((p.metadata && p.metadata.trip_id) || '') !== String(selectedTripId)) return false;
                 }
             }
             // Search filter
             if (q) {
-                const name  = (p.metadata?.partner_name || '').toLowerCase();
-                const code  = (p.metadata?.partner_code || '').toLowerCase();
-                const route = (p.metadata?.route_code  || '').toLowerCase();
-                if (!name.includes(q) && !code.includes(q) && !route.includes(q)) return false;
+                const name  = (p.metadata && p.metadata.partner_name) || '';
+                const code  = (p.metadata && p.metadata.partner_code) || '';
+                const route = (p.metadata && p.metadata.route_code)  || '';
+                if (!name.toLowerCase().includes(q) && !code.toLowerCase().includes(q) && !route.toLowerCase().includes(q)) return false;
             }
             // Confidence filter
             if (filters.geoConfidence) {
-                const conf = p.metadata?.geocoding_confidence;
+                const conf = p.metadata && p.metadata.geocoding_confidence;
                 if (filters.geoConfidence === 'HIGH') {
                     if (conf !== 'HIGH' && conf !== 'MANUAL') return false;
                 } else if (filters.geoConfidence === 'MEDIUM') {
