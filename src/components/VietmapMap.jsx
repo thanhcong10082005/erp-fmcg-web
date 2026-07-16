@@ -173,9 +173,6 @@ export default function VietmapMap({
       .then((VietmapGL) => {
         if (cancelled || !containerRef.current || mapRef.current) return;
 
-        // eslint-disable-next-line no-console
-        console.info('[VietmapMap] VietMap GL ready, style:', MAP_STYLE);
-
         const map = new VietmapGL.Map({
           container: containerRef.current,
           style: MAP_STYLE,

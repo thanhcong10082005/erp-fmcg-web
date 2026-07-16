@@ -198,10 +198,11 @@ export default function DispatcherMapPage({ token, userRole }) {
         setRouteLoading(true);
         try {
             const r = await apiCall('GET', `/vietmap/trips/${tripId}/route`, null, token);
+            console.log(`[DispatcherMap] fetch route success: geometry=${r.geometry ? 'present' : 'null'}, distance=${r.distance_m}`);
             setRouteGeometry(r.geometry || null);
             setRouteDistance(r.distance_m || 0);
         } catch (e) {
-            console.warn('[DispatcherMap] fetch route failed:', e.message);
+            console.error('[DispatcherMap] fetch route failed:', e.message, 'status:', e.status, 'response:', e.response);
             setRouteGeometry(null);
         } finally {
             setRouteLoading(false);

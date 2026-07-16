@@ -131,7 +131,10 @@ async function handleResponse(res: Response): Promise<unknown> {
     try { data = await res.json() as Record<string, unknown>; } catch (_) { /* non-JSON */ }
     if (!res.ok) {
         const msg = (data?.message || data?.error || `HTTP ${res.status}`) as string;
-        throw new Error(Array.isArray(msg) ? msg.join(', ') : msg);
+        const err = new Error(Array.isArray(msg) ? msg.join(', ') : msg);
+        (err as any).status = res.status;
+        (err as any).response = data;
+        throw err;
     }
     // Auto-unwrap: backend wraps most responses in { success, data }
     // eslint-disable-next-line no-prototype-builtins
