@@ -122,7 +122,7 @@ function PermissionsTab({ token }) {
                                         }}>
                                         <div style={{ fontWeight: 700 }}>{r.role_name}</div>
                                         <div className="text-sm text-muted">code: {r.role_code}</div>
-                                        <div className="text-sm">🔑 {getRolePermCount(r.role_code)} permissions | 👥 {r.user_count || 0} users</div>
+                                        <div className="text-sm">🔑 {getRolePermCount(r.role_code)} permissions | 👥 {getUserCountForRole(r.role_code)} users</div>
                                         {r.is_system && <span className="badge" style={{ background: '#DC2626' }}>SYSTEM</span>}
                                     </div>
                                 ))}
@@ -296,10 +296,32 @@ function UsersTab({ token }) {
         );
     });
 
+    // Fallback role names (nếu API không trả về roles)
+    const ROLE_NAMES_MAP = {
+        1: 'ADMIN',
+        2: 'MANAGER',
+        3: 'SALES',
+        4: 'SALES',
+        5: 'DRIVER',
+        6: 'WAREHOUSE',
+    };
+
     const getRoleName = (roleId) => {
         if (!roleId) return { name: '— CHƯA CÓ ROLE —', color: '#DC2626' };
+        // Ưu tiên từ API
         const r = roles.find(x => x.role_id === roleId);
-        return { name: r ? r.role_name : `ID ${roleId}`, color: '#3B82F6' };
+        if (r && r.role_name) return { name: r.role_name, color: '#3B82F6' };
+        // Fallback hardcoded
+        const fallbackName = ROLE_NAMES_MAP[Number(roleId)] || `ID ${roleId}`;
+        return { name: fallbackName, color: '#3B82F6' };
+    };
+
+    // Compute user_count từ users list
+    const getUserCountForRole = (roleCode) => {
+        return users.filter(u => {
+            const userRole = roles.find(r => r.role_id === u.primary_role_id);
+            return userRole && userRole.role_code === roleCode;
+        }).length;
     };
 
     return (

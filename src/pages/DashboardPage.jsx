@@ -208,12 +208,6 @@ export default function DashboardPage({ token }) {
                 >
                     Quy trình Hub
                 </button>
-                <button
-                    className={`dash-tab ${activeTab === 'breakdown' ? 'active' : ''}`}
-                    onClick={() => setActiveTab('breakdown')}
-                >
-                    Chi tiết
-                </button>
             </div>
 
             {/* ─── OVERVIEW TAB ──────────────────────── */}
@@ -419,100 +413,6 @@ export default function DashboardPage({ token }) {
                                         Không có việc cần xử lý ngay hôm nay
                                     </div>
                                 )}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* ─── BREAKDOWN TAB ──────────────────────────── */}
-            {activeTab === 'breakdown' && (
-                <div className="dash-cols-2">
-                    <div className="card">
-                        <div className="card-header">
-                            <h3>Số liệu tổng hợp</h3>
-                        </div>
-                        <div className="card-body">
-                            <div className="dash-stats-table">
-                                <div className="dash-stats-row">
-                                    <span>Tổng số Partner (KH + ASO)</span>
-                                    <strong>{fmt.num(partnerCount)}</strong>
-                                </div>
-                                <div className="dash-stats-row">
-                                    <span>Sản phẩm đang kinh doanh</span>
-                                    <strong>{fmt.num(productCount)}</strong>
-                                </div>
-                                <div className="dash-stats-row">
-                                    <span>Đơn bán hôm nay</span>
-                                    <strong>{fmt.num(d.overview.order_today || 0)}</strong>
-                                </div>
-                                <div className="dash-stats-row">
-                                    <span>Doanh thu hôm nay</span>
-                                    <strong>{fmt.vnd(d.today?.total || 0)}</strong>
-                                </div>
-                                <div className="dash-stats-row">
-                                    <span>Sản phẩm sắp hết hàng</span>
-                                    <strong style={{ color: '#D97706' }}>
-                                        {fmt.num(d.low_stock_count || 0)}
-                                    </strong>
-                                </div>
-                                <div className="dash-stats-row">
-                                    <span>Tổng công nợ phải thu</span>
-                                    <strong style={{ color: '#DC2626' }}>
-                                        {fmt.vnd(d.partner_stats?.total_debt || 0)}
-                                    </strong>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div className="card">
-                        <div className="card-header">
-                            <h3>Lưu ý vận hành</h3>
-                        </div>
-                        <div className="card-body">
-                            <div className="dash-notes">
-                                <div className="dash-note-row">
-                                    <span>🔄</span>
-                                    <div>
-                                        <strong>Auto-import khi khởi động</strong>
-                                        <div className="dash-note-sub">
-                                            Khi backend start, 3 file CSV sẽ tự động được
-                                            import nếu database trống. Sau đó chỉ đọc.
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className="dash-note-row">
-                                    <span>🏪</span>
-                                    <div>
-                                        <strong>Customers + ASO = Partners</strong>
-                                        <div className="dash-note-sub">
-                                            Toàn bộ điểm bán (kể cả STORE &amp; ASO)
-                                            được lưu chung trong <code>tenant.partners</code>.
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className="dash-note-row">
-                                    <span>📦</span>
-                                    <div>
-                                        <strong>Tồn kho theo stock_ledger</strong>
-                                        <div className="dash-note-sub">
-                                            Tồn kho được tính từ sổ cái
-                                            <code> tenant.stock_ledger</code>, cập nhật real-time
-                                            từ các phiếu nhập / xuất.
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className="dash-note-row">
-                                    <span>🔐</span>
-                                    <div>
-                                        <strong>Role có MFA</strong>
-                                        <div className="dash-note-sub">
-                                            OWNER / ADMIN / SALES_ADMIN bắt buộc cấu hình MFA.
-                                            Các role khác có thể bỏ qua.
-                                        </div>
-                                    </div>
-                                </div>
                             </div>
                         </div>
                     </div>
