@@ -9,7 +9,15 @@
  *
  * Features v12:
  *   Phase H: Audit Map được gộp vào — dùng tab/toggle để chuyển chế độ
+ *   Phase L: "Gom chuyến" — vẽ vùng chọn hình chữ nhật, batch gán đơn
  */
+
+// ─── Batch selection helpers ─────────────────────────────────
+function pointInBounds(lat, lng, bounds) {
+    if (!bounds) return false;
+    return lat >= bounds.minLat && lat <= bounds.maxLat
+        && lng >= bounds.minLng && lng <= bounds.maxLng;
+}
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { apiCall } from '../api/client';
@@ -78,6 +86,15 @@ export default function DispatcherMapPage({ token, userRole }) {
     // Popup assign state
     const [popupTripId, setPopupTripId]    = useState('');
     const [assignLoading, setAssignLoading] = useState(false);
+
+    // ── "Gom chuyến" (Batch Assignment) state ───────────────────
+    const [batchMode, setBatchMode]           = useState(false);    // đang ở chế độ vẽ vùng
+    const [batchDrawing, setBatchDrawing]      = useState(false);    // đang kéo vẽ
+    const [batchRect, setBatchRect]            = useState(null);     // { startX, startY, endX, endY } (pixel coords)
+    const [batchBounds, setBatchBounds]        = useState(null);     // { minLat, maxLat, minLng, maxLng } (lat/lng)
+    const [batchSelected, setBatchSelected]    = useState([]);       // danh sách partner đã chọn trong vùng
+    const [batchCreating, setBatchCreating]   = useState(false);    // đang tạo chuyến
+    const batchMapRef = useRef(null);                               // ref đến map container cho drawing
 
     // ── Audit mode state ──────────────────────────────────────
     const [auditTrips, setAuditTrips]           = useState([]);
@@ -419,6 +436,111 @@ export default function DispatcherMapPage({ token, userRole }) {
         }
     };
 
+    // ── Phase L: Gom chuyến (Batch Assignment) ────────────────────
+
+    /** Bắt đầu chế độ vẽ vùng chọn */
+    const handleStartBatchMode = () => {
+        setBatchMode(true);
+        setBatchDrawing(false);
+        setBatchRect(null);
+        setBatchBounds(null);
+        setBatchSelected([]);
+    };
+
+    /** Hủy chế độ vẽ */
+    const handleCancelBatchMode = () => {
+        setBatchMode(false);
+        setBatchDrawing(false);
+        setBatchRect(null);
+        setBatchBounds(null);
+        setBatchSelected([]);
+    };
+
+    /** Chuyển pixel coords → lat/lng bounds dùng map.unproject */
+    const pixelToBounds = (map, rect) => {
+        if (!map || !rect) return null;
+        const { startX, startY, endX, endY } = rect;
+        const sw = map.unproject([Math.min(startX, endX), Math.max(startY, endY)]);
+        const ne = map.unproject([Math.max(startX, endX), Math.min(startY, endY)]);
+        return {
+            minLat: sw.lat,
+            maxLat: ne.lat,
+            minLng: sw.lng,
+            maxLng: ne.lng,
+        };
+    };
+
+    /** Tính danh sách partner trong vùng chọn */
+    const getPointsInBounds = useCallback((bounds) => {
+        return points.filter(p => pointInBounds(p.lat, p.lng, bounds));
+    }, [points]);
+
+    /** Khi hoàn thành vẽ → lấy danh sách partners trong vùng */
+    const handleBatchDrawComplete = useCallback((map) => {
+        if (!batchRect || !map) return;
+        const bounds = pixelToBounds(map, batchRect);
+        setBatchBounds(bounds);
+        setBatchDrawing(false);
+        const inBounds = getPointsInBounds(bounds);
+        setBatchSelected(inBounds);
+    }, [batchRect, getPointsInBounds]);
+
+    /** Toggle chọn/bỏ 1 partner khỏi batch */
+    const toggleBatchPartner = (partnerId) => {
+        setBatchSelected(prev => {
+            const idx = prev.findIndex(p => String(p.id) === String(partnerId));
+            if (idx >= 0) {
+                return prev.filter(p => String(p.id) !== String(partnerId));
+            } else {
+                const pt = points.find(p => String(p.id) === String(partnerId));
+                return pt ? [...prev, pt] : prev;
+            }
+        });
+    };
+
+    /** Tạo chuyến và gán tất cả partners đã chọn */
+    const handleBatchCreateTrip = async () => {
+        if (batchSelected.length === 0) { alert('Chưa chọn khách hàng nào.'); return; }
+        setBatchCreating(true);
+        setErr('');
+        try {
+            // 1. Tạo chuyến mới (lấy ngày hôm nay, warehouse mặc định)
+            const tripData = {
+                trip_date: new Date().toISOString().split('T')[0],
+                warehouse_id: 1,
+            };
+            const trip = await apiCall('POST', '/sales/trips', tripData, token);
+            // 2. Gán từng partner: tìm đơn CONFIRMED và gán vào chuyến
+            let assigned = 0, skipped = 0;
+            for (const partner of batchSelected) {
+                try {
+                    const orders = await apiCall(
+                        'GET', `/sales/orders?status=CONFIRMED&partner_id=${partner.id}&limit=1`, null, token,
+                    );
+                    const order = Array.isArray(orders) ? orders[0] : (orders?.data?.[0]);
+                    if (order) {
+                        await apiCall('POST', `/sales/trips/${trip.trip_id}/orders`, { so_id: order.so_id }, token);
+                        assigned++;
+                    } else {
+                        skipped++;
+                    }
+                } catch {
+                    skipped++;
+                }
+            }
+            // 3. Refresh + thông báo
+            await loadAll();
+            alert(`✅ Đã tạo chuyến ${trip.trip_number} và gán ${assigned} đơn.${skipped > 0 ? `\n⚠️ ${skipped} khách hàng chưa có đơn CONFIRMED.` : ''}`);
+            handleCancelBatchMode();
+            setSelectedTripId(String(trip.trip_id));
+        } catch (e) {
+            setErr(e.message);
+            alert('Lỗi khi tạo chuyến: ' + e.message);
+        } finally {
+            setBatchCreating(false);
+        }
+    };
+
     // ── Build trip options for popup ──────────────────────────────
     const tripOptions = trips.map(t => ({ trip_id: t.trip_id, trip_number: t.trip_number }));
 
@@ -510,6 +632,18 @@ export default function DispatcherMapPage({ token, userRole }) {
                         <button className="btn btn-outline btn-sm" onClick={() => setForceRenderKey(k => k + 1)} title="Force re-render markers">
                             🎯 Hiện markers
                         </button>
+                        {canEdit && (
+                            <button
+                                className="btn btn-sm"
+                                onClick={batchMode ? handleCancelBatchMode : handleStartBatchMode}
+                                style={{
+                                    background: batchMode ? '#DC2626' : '#059669',
+                                    color: '#fff', border: 'none',
+                                }}
+                            >
+                                {batchMode ? '✕ Hủy' : '📦 Gom chuyến'}
+                            </button>
+                        )}
                     </div>
                 </div>
 
@@ -612,7 +746,7 @@ export default function DispatcherMapPage({ token, userRole }) {
                         fitBounds={true}
                         boundsKey={selectedTripId ? `${selectedTripId}-${tripOrders.length}` : undefined}
                         draggable={canEdit}
-                        onPointClick={setSelectedPoint}
+                        onPointClick={batchMode ? null : setSelectedPoint}
                         onLocationChange={handleLocationChange}
                         // Phase 3: Route Line
                         routeGeometry={routeGeometry}
@@ -620,25 +754,29 @@ export default function DispatcherMapPage({ token, userRole }) {
                         routeWidth={3}
                         routeOpacity={0.8}
                         // Phase 4: Popup
-                        selectedPoint={selectedPoint}
+                        selectedPoint={batchMode ? null : selectedPoint}
                         tripOptions={tripOptions}
                         selectedTripIdForAssign={popupTripId}
                         onSelectTripForAssign={setPopupTripId}
                         onConfirmAssign={handlePopupAssign}
                         assignLoading={assignLoading}
-                        // Force-render fallback
-                        forceRender={forceRenderKey}
+                        // Phase L: Batch selection
+                        batchMode={batchMode}
+                        batchRect={batchRect}
+                        onBatchRectChange={setBatchRect}
+                        onBatchDrawComplete={handleBatchDrawComplete}
                         onMapReady={(map) => {
+                            batchMapRef.current = map;
                             if (map && filteredPoints.length > 0) {
-                                // Double-ensure markers are rendered on map ready
                                 setTimeout(() => {
                                     if (!map.isRemoved?.()) {
-                                        // Force a re-render of markers
                                         setForceRenderKey(k => k + 1);
                                     }
                                 }, 100);
                             }
                         }}
+                        // Force-render fallback
+                        forceRender={forceRenderKey}
                     />
                     {savingId && (
                         <div style={{ padding: 8, fontSize: '0.8rem', color: '#6B7280', background: '#F3F4F6' }}>
@@ -649,6 +787,89 @@ export default function DispatcherMapPage({ token, userRole }) {
 
                 {/* Side panel */}
                 <div>
+                    {/* Phase L: Batch Selection Panel */}
+                    {batchMode && (
+                        <div className="card" style={{ marginBottom: 12, border: '2px solid #059669', background: '#F0FDF4' }}>
+                            <div className="card-header">
+                                <h4 style={{ margin: 0, fontSize: '0.95rem', color: '#065F46' }}>
+                                    📦 Gom chuyến - Vùng đã chọn
+                                </h4>
+                            </div>
+                            <div className="card-body">
+                                {batchSelected.length === 0 && !batchDrawing && (
+                                    <div style={{ textAlign: 'center', padding: '16px 0', color: '#6B7280', fontSize: '0.85rem' }}>
+                                        <div style={{ fontSize: '2rem', marginBottom: 8 }}>⬜</div>
+                                        {batchBounds
+                                            ? 'Không có khách hàng trong vùng này. Thử vẽ lại.'
+                                            : 'Kéo chuột trên bản đồ để chọn vùng chứa khách hàng cần gom.'
+                                        }
+                                    </div>
+                                )}
+                                {batchSelected.length > 0 && (
+                                    <>
+                                        <div style={{ marginBottom: 8, fontSize: '0.85rem', color: '#065F46' }}>
+                                            <strong>{batchSelected.length}</strong> khách hàng trong vùng:
+                                        </div>
+                                        <div style={{ maxHeight: 200, overflowY: 'auto', marginBottom: 12 }}>
+                                            {batchSelected.map(p => {
+                                                const pid = String(p.id);
+                                                return (
+                                                    <div key={pid} style={{
+                                                        display: 'flex', alignItems: 'center', gap: 8,
+                                                        padding: '4px 0', borderBottom: '1px solid #D1FAE5', fontSize: '0.8rem',
+                                                    }}>
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={true}
+                                                            onChange={() => toggleBatchPartner(pid)}
+                                                        />
+                                                        <span style={{ flex: 1 }}>{p.label}</span>
+                                                        <span style={{ color: '#6B7280', fontSize: '0.75rem' }}>
+                                                            #{pid}
+                                                        </span>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                        <div style={{ display: 'flex', gap: 8 }}>
+                                            <button
+                                                className="btn btn-sm"
+                                                onClick={handleBatchCreateTrip}
+                                                disabled={batchCreating || batchSelected.length === 0}
+                                                style={{ background: '#059669', color: '#fff', border: 'none', flex: 1 }}
+                                            >
+                                                {batchCreating ? '⏳ Đang tạo...' : `✅ Tạo chuyến (${batchSelected.length})`}
+                                            </button>
+                                            <button
+                                                className="btn btn-outline btn-sm"
+                                                onClick={handleCancelBatchMode}
+                                            >
+                                                Hủy
+                                            </button>
+                                        </div>
+                                        <div style={{ marginTop: 8, fontSize: '0.75rem', color: '#6B7280' }}>
+                                            * Gán đơn CONFIRMED của từng khách vào chuyến mới
+                                        </div>
+                                    </>
+                                )}
+                                {batchDrawing && (
+                                    <div style={{ textAlign: 'center', padding: 8, color: '#059669', fontSize: '0.85rem' }}>
+                                        ⬛ Đang kéo... thả chuột để hoàn thành vùng chọn
+                                    </div>
+                                )}
+                                {!batchDrawing && batchSelected.length === 0 && (
+                                    <button
+                                        className="btn btn-outline btn-sm"
+                                        onClick={handleCancelBatchMode}
+                                        style={{ width: '100%' }}
+                                    >
+                                        ← Quay lại
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
                     {/* Filters */}
                     <div className="card" style={{ marginBottom: 12 }}>
                         <div className="card-header"><h4 style={{ margin: 0, fontSize: '0.95rem' }}>🔍 Lọc & Tìm kiếm</h4></div>
