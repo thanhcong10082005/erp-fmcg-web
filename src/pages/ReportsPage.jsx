@@ -91,18 +91,18 @@ export default function ReportsPage({ token }) {
                                     <div className="table-wrap">
                                         <table>
                                             <thead>
-                                                <tr><th>Kỳ</th><th>Số HĐ</th><th>Doanh thu</th><th>Thuế</th><th>CK</th><th>Tổng</th><th>Đã thu</th></tr>
+                                                <tr><th>Kỳ</th><th>Số hóa đơn</th><th>Doanh thu</th><th>Thuế</th><th>CK</th><th>Tổng</th><th>Đã thu</th></tr>
                                             </thead>
                                             <tbody>
                                                 {revenue.map((r, i) => (
                                                     <tr key={i}>
                                                         <td>{fmt.dateOnly(r.period)}</td>
-                                                        <td>{r.invoice_count}</td>
-                                                        <td>{fmt.vnd(r.revenue)}</td>
-                                                        <td>{fmt.vnd(r.revenue_tax)}</td>
-                                                        <td>{fmt.vnd(r.revenue_discount)}</td>
-                                                        <td><strong>{fmt.vnd(r.revenue_total)}</strong></td>
-                                                        <td>{fmt.vnd(r.revenue_collected)}</td>
+                                                        <td>{r.invoice_count || 0}</td>
+                                                        <td>{fmt.vnd(Number(r.revenue) || 0)}</td>
+                                                        <td>{fmt.vnd(Number(r.revenue_tax) || 0)}</td>
+                                                        <td>{fmt.vnd(Number(r.revenue_discount) || 0)}</td>
+                                                        <td><strong>{fmt.vnd(Number(r.revenue_total) || 0)}</strong></td>
+                                                        <td>{fmt.vnd(Number(r.revenue_collected) || 0)}</td>
                                                     </tr>
                                                 ))}
                                             </tbody>
@@ -137,19 +137,18 @@ export default function ReportsPage({ token }) {
                                 <div className="table-wrap">
                                     <table>
                                         <thead>
-                                            <tr><th>Mã KH</th><th>Tên KH</th><th>Phone</th><th>Số HĐ</th><th>Tổng bill</th><th>Đã thu</th><th>Còn nợ</th><th>Quá hạn</th></tr>
+                                            <tr><th>Mã KH</th><th>Tên KH</th><th>Số hóa đơn</th><th>Tổng bill</th><th>Đã thu</th><th>Còn nợ</th><th>Quá hạn</th></tr>
                                         </thead>
                                         <tbody>
                                             {ar.map(a => (
                                                 <tr key={a.partner_id}>
                                                     <td><code>{a.partner_code}</code></td>
                                                     <td><strong>{a.partner_name}</strong></td>
-                                                    <td>{a.phone || '—'}</td>
-                                                    <td>{a.invoice_count}</td>
-                                                    <td>{fmt.vnd(a.total_billed)}</td>
-                                                    <td>{fmt.vnd(a.total_paid)}</td>
-                                                    <td><strong style={{ color: '#DC2626' }}>{fmt.vnd(a.outstanding)}</strong></td>
-                                                    <td><strong style={{ color: parseFloat(a.overdue) > 0 ? '#DC2626' : 'inherit' }}>{fmt.vnd(a.overdue)}</strong></td>
+                                                    <td>{a.invoice_count || 0}</td>
+                                                    <td>{fmt.vnd(Number(a.total_billed) || 0)}</td>
+                                                    <td>{fmt.vnd(Number(a.total_paid) || 0)}</td>
+                                                    <td><strong style={{ color: '#DC2626' }}>{fmt.vnd(Number(a.outstanding) || 0)}</strong></td>
+                                                    <td><strong style={{ color: Number(a.overdue) > 0 ? '#DC2626' : 'inherit' }}>{fmt.vnd(Number(a.overdue) || 0)}</strong></td>
                                                 </tr>
                                             ))}
                                         </tbody>

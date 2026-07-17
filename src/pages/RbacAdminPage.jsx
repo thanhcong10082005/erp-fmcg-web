@@ -93,6 +93,12 @@ function PermissionsTab({ token }) {
         return acc;
     }, {});
 
+    // Compute permission_count từ matrix data
+    const getRolePermCount = (roleCode) => {
+        const roleRows = matrix.filter(row => row.role_code === roleCode);
+        return roleRows.length;
+    };
+
     return (
         <div>
             <div className="card">
@@ -116,7 +122,7 @@ function PermissionsTab({ token }) {
                                         }}>
                                         <div style={{ fontWeight: 700 }}>{r.role_name}</div>
                                         <div className="text-sm text-muted">code: {r.role_code}</div>
-                                        <div className="text-sm">🔑 {r.permission_count} permissions | 👥 {r.user_count} users</div>
+                                        <div className="text-sm">🔑 {getRolePermCount(r.role_code)} permissions | 👥 {r.user_count || 0} users</div>
                                         {r.is_system && <span className="badge" style={{ background: '#DC2626' }}>SYSTEM</span>}
                                     </div>
                                 ))}

@@ -57,7 +57,7 @@ export default function InvoicesPage({ token }) {
         <div>
             <div className="card">
                 <div className="card-header">
-                    <h3>🧾 Hóa đơn & e-Invoice (NĐ 123/2020)</h3>
+                    <h3>🧾 Hóa đơn</h3>
                     <div className="flex">
                         <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{ padding: '6px 10px' }}>
                             <option value="">Tất cả</option>
@@ -70,45 +70,49 @@ export default function InvoicesPage({ token }) {
                 </div>
                 <div className="card-body">
                     {err && <div className="alert alert-error">{err}</div>}
-                    {loading ? <div>Đang tải...</div> : (
+                    {loading ? <div>�ang tải...</div> : (
                         <div className="table-wrap">
                             <table>
                                 <thead>
                                     <tr>
                                         <th>Số HĐ</th><th>Ngày</th><th>Khách hàng</th>
-                                        <th>MST</th><th>Subtotal</th><th>Tax</th>
+                                        <th>Subtotal</th><th>Thuế</th>
                                         <th>Tổng</th><th>Đã thu</th>
-                                        <th>Thanh toán</th><th>Trạng thái</th>
-                                        <th>e-Invoice</th><th></th>
+                                        <th>Thanh toán</th><th>Trạng thái</th><th></th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {invoices.map(i => (
+                                    {invoices.map(i => {
+                                        const paid = Number(i.paid_amount) || 0;
+                                        const total = Number(i.total_amount) || 0;
+                                        const paymentStatus = paid >= total ? 'PAID' : (paid > 0 ? 'PARTIAL' : 'UNPAID');
+                                        return (
                                         <tr key={i.invoice_id}>
                                             <td><code>{i.invoice_number}</code></td>
                                             <td>{fmt.dateOnly(i.invoice_date)}</td>
                                             <td><strong>{i.partner_name}</strong></td>
-                                            <td className="text-sm">{i.tax_code || '—'}</td>
-                                            <td>{fmt.vnd(i.subtotal)}</td>
-                                            <td>{fmt.vnd(i.tax_amount)}</td>
-                                            <td><strong>{fmt.vnd(i.total_amount)}</strong></td>
-                                            <td>{fmt.vnd(i.paid_amount)}</td>
-                                            <td><StatusBadge s={i.payment_status} /></td>
+                                            <td>{fmt.vnd(Number(i.subtotal) || 0)}</td>
+                                            <td>{fmt.vnd(Number(i.tax_amount) || 0)}</td>
+                                            <td><strong>{fmt.vnd(total)}</strong></td>
+                                            <td style={{ color: paid > 0 ? '#059669' : '#6B7280', fontWeight: paid > 0 ? 600 : 400 }}>
+                                                {fmt.vnd(paid)}
+                                            </td>
+                                            <td><StatusBadge s={paymentStatus} /></td>
                                             <td><StatusBadge s={i.status} /></td>
-                                            <td><StatusBadge s={i.e_invoice_status} /></td>
                                             <td>
                                                 <button className="btn btn-sm btn-outline" onClick={() => viewDetail(i.invoice_id)}>👁️</button>
-                                                {i.status === 'DRAFT' && (
-                                                    <button className="btn btn-sm btn-primary" onClick={() => issueInvoice(i.invoice_id)} title="Phát hành + gửi CQT">📤</button>
-                                                )}
-                                                {i.status === 'ISSUED' && parseFloat(i.paid_amount) < parseFloat(i.total_amount) && (
-                                                    <button className="btn btn-sm btn-success" onClick={() => recordPayment(i)} title="Ghi nhận thanh toán">💵</button>
+                                                {i.status === 'ISSUED' && (
+                                                    <>
+                                                        {' '}
+                                                        <button className="btn btn-sm btn-outline" onClick={() => recordPayment(i)}>💰 Thu</button>
+                                                    </>
                                                 )}
                                             </td>
                                         </tr>
-                                    ))}
+                                    );
+                                    })}
                                     {invoices.length === 0 && (
-                                        <tr><td colSpan={12} style={{ textAlign: 'center', padding: 20, color: '#6B7280' }}>Không có hóa đơn</td></tr>
+                                        <tr><td colSpan={10} style={{ textAlign: 'center', padding: 20, color: '#6B7280' }}>Không có hóa đơn</td></tr>
                                     )}
                                 </tbody>
                             </table>

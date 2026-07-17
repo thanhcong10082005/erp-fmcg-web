@@ -1,5 +1,5 @@
 /**
- * DispatcherMapPage — Bản đồ điều phối (v11).
+ * DispatcherMapPage — Bản đồ điều phối (v12).
  *
  * Features v11:
  *   Phase 3: Route Line Visualization — vẽ LineString khi chọn trip
@@ -7,10 +7,11 @@
  *   Phase 5: Data-rich Pins — stop_order số + scale theo weight
  *   Phase 2 (backend): "Tối ưu lộ trình" — TSP button
  *
- * Phase 6 (Audit Map): Xem ở trang riêng AuditMapPage
+ * Features v12:
+ *   Phase H: Audit Map được gộp vào — dùng tab/toggle để chuyển chế độ
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { apiCall } from '../api/client';
 import VietmapMap from '../components/VietmapMap';
 
@@ -25,7 +26,26 @@ function colorForTrip(tripId) {
     return TRIP_COLORS[Math.abs(tripId) % TRIP_COLORS.length];
 }
 
+// ─── Audit Map helpers ───────────────────────────────────────
+const PLAN_COLOR = '#2563EB';
+const ACTUAL_COLOR = '#EF4444';
+
+function haversineDistance(lat1, lon1, lat2, lon2) {
+    if (!lat1 || !lon1 || !lat2 || !lon2) return 0;
+    const R = 6371000;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) ** 2
+        + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180)
+        * Math.sin(dLon / 2) ** 2;
+    return Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+}
+
 export default function DispatcherMapPage({ token, userRole }) {
+    // ── Mode toggle: 'dispatch' | 'audit' ─────────────────────
+    const [mapMode, setMapMode] = useState('dispatch');
+
+    // ── Dispatch mode state ────────────────────────────────────
     const [points, setPoints]                 = useState([]);
     const [trips, setTrips]                   = useState([]);
     const [selectedTripId, setSelectedTripId]  = useState('');
@@ -36,29 +56,36 @@ export default function DispatcherMapPage({ token, userRole }) {
     const [searchText, setSearchText]       = useState('');
     const [routes, setRoutes]               = useState([]);
     const [savingId, setSavingId]           = useState(null);
-    // Force-reload markers counter
     const [forceRenderKey, setForceRenderKey] = useState(0);
 
-    // ── Geocoding state ────────────────────────────────────────
+    // Geocoding state
     const [pendingCount, setPendingCount]   = useState(0);
     const [geocodeRunning, setGeocodeRunning] = useState(false);
     const [geocodeProgress, setGeocodeProgress] = useState(null);
     const [geocodeMsg, setGeocodeMsg]       = useState('');
 
-    // ── Phase 3: Route geometry ───────────────────────────────
+    // Route geometry
     const [routeGeometry, setRouteGeometry]   = useState(null);
     const [routeDistance, setRouteDistance]  = useState(0);
     const [routeLoading, setRouteLoading]   = useState(false);
     const [tripOrders, setTripOrders]         = useState([]);
 
-    // ── Phase 2: TSP optimization ─────────────────────────────
+    // TSP optimization
     const [optimizing, setOptimizing]       = useState(false);
     const [optimizeResult, setOptimizeResult] = useState(null);
     const [optimizeMsg, setOptimizeMsg]     = useState('');
 
-    // ── Phase 4: Popup assign state ───────────────────────────
+    // Popup assign state
     const [popupTripId, setPopupTripId]    = useState('');
     const [assignLoading, setAssignLoading] = useState(false);
+
+    // ── Audit mode state ──────────────────────────────────────
+    const [auditTrips, setAuditTrips]           = useState([]);
+    const [auditTripId, setAuditTripId]         = useState('');
+    const [auditData, setAuditData]             = useState(null);
+    const [auditLoading, setAuditLoading]       = useState(false);
+    const [auditMapReady, setAuditMapReady]     = useState(false);
+    const auditMapRef = useRef(null);
 
     const canEdit = ['OWNER', 'ADMIN', 'DISPATCHER'].includes((userRole || '').toUpperCase());
     const canAdmin = ['OWNER', 'ADMIN'].includes((userRole || '').toUpperCase());
@@ -408,37 +435,83 @@ export default function DispatcherMapPage({ token, userRole }) {
             {/* Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
                 <h3 style={{ margin: 0 }}>
-                    🚚 Bản đồ điều phối — {points.length} điểm / {trips.length} chuyến đang mở
+                    🗺️ Bản đồ điều phối
                 </h3>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                    {/* Geocode status badge */}
-                    <span style={{
-                        fontSize: '0.75rem',
-                        color: pendingCount === 0 ? '#059669' : '#92400E',
-                        background: pendingCount === 0 ? '#D1FAE5' : '#FEF3C7',
-                        padding: '2px 8px', borderRadius: 12,
-                    }}>
-                        {geocodeRunning
-                            ? `⏳ Geocode ${geocodeProgress?.current ?? 0}/${geocodeProgress?.total ?? (pendingCount || '?')}`
-                            : pendingCount === 0
-                                ? '✓ Toạ độ đầy đủ'
-                                : `⚠️ ${pendingCount} ASO thiếu toạ độ`
-                        }
-                    </span>
-                    {canAdmin && pendingCount > 0 && (
-                        <button className="btn btn-sm" onClick={handleGeocodeRefresh} disabled={geocodeRunning}
-                            style={{ background: geocodeRunning ? '#FCD34D' : '#F59E0B', color: '#fff', border: 'none', cursor: geocodeRunning ? 'wait' : 'pointer' }}>
-                            {geocodeRunning ? '⏳ Đang chạy...' : `🛰️ Geocode ${pendingCount} ASO`}
-                        </button>
-                    )}
-                    <button className="btn btn-outline btn-sm" onClick={loadAll} disabled={loading}>
-                        {loading ? '⏳ Đang tải...' : '🔄 Làm mới'}
+                {/* Mode tabs */}
+                <div style={{ display: 'flex', gap: 4 }}>
+                    <button
+                        onClick={() => setMapMode('dispatch')}
+                        style={{
+                            padding: '6px 16px',
+                            border: 'none',
+                            borderRadius: 8,
+                            cursor: 'pointer',
+                            fontWeight: 600,
+                            fontSize: '0.85rem',
+                            background: mapMode === 'dispatch' ? '#3B82F6' : '#E5E7EB',
+                            color: mapMode === 'dispatch' ? '#fff' : '#374151',
+                            transition: 'all 0.2s',
+                        }}
+                    >
+                        🗺️ Điều phối
                     </button>
-                    <button className="btn btn-outline btn-sm" onClick={() => setForceRenderKey(k => k + 1)} title="Force re-render markers">
-                        🎯 Hiện markers
+                    <button
+                        onClick={() => setMapMode('audit')}
+                        style={{
+                            padding: '6px 16px',
+                            border: 'none',
+                            borderRadius: 8,
+                            cursor: 'pointer',
+                            fontWeight: 600,
+                            fontSize: '0.85rem',
+                            background: mapMode === 'audit' ? '#8B5CF6' : '#E5E7EB',
+                            color: mapMode === 'audit' ? '#fff' : '#374151',
+                            transition: 'all 0.2s',
+                        }}
+                    >
+                        🔍 Audit
                     </button>
                 </div>
             </div>
+
+            {/* ── DISPATCH MODE ── */}
+            {mapMode === 'dispatch' && (
+            <div>
+                {/* Geocode status + actions */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <span style={{
+                            fontSize: '0.75rem',
+                            color: pendingCount === 0 ? '#059669' : '#92400E',
+                            background: pendingCount === 0 ? '#D1FAE5' : '#FEF3C7',
+                            padding: '2px 8px', borderRadius: 12,
+                        }}>
+                            {geocodeRunning
+                                ? `⏳ Geocode ${geocodeProgress?.current ?? 0}/${geocodeProgress?.total ?? (pendingCount || '?')}`
+                                : pendingCount === 0
+                                    ? '✓ Toạ độ đầy đủ'
+                                    : `⚠️ ${pendingCount} ASO thiếu toạ độ`
+                            }
+                        </span>
+                        <span style={{ fontSize: '0.8rem', color: '#6B7280' }}>
+                            {points.length} điểm / {trips.length} chuyến đang mở
+                        </span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                        {canAdmin && pendingCount > 0 && (
+                            <button className="btn btn-sm" onClick={handleGeocodeRefresh} disabled={geocodeRunning}
+                                style={{ background: geocodeRunning ? '#FCD34D' : '#F59E0B', color: '#fff', border: 'none', cursor: geocodeRunning ? 'wait' : 'pointer' }}>
+                                {geocodeRunning ? '⏳ Đang chạy...' : `🛰️ Geocode ${pendingCount} ASO`}
+                            </button>
+                        )}
+                        <button className="btn btn-outline btn-sm" onClick={loadAll} disabled={loading}>
+                            {loading ? '⏳ Đang tải...' : '🔄 Làm mới'}
+                        </button>
+                        <button className="btn btn-outline btn-sm" onClick={() => setForceRenderKey(k => k + 1)} title="Force re-render markers">
+                            🎯 Hiện markers
+                        </button>
+                    </div>
+                </div>
 
             {/* Messages */}
             {geocodeMsg && (
@@ -715,6 +788,286 @@ export default function DispatcherMapPage({ token, userRole }) {
                     )}
                 </div>
             </div>
+            </div>
+            )}
+
+            {/* ── AUDIT MODE ── */}
+            {mapMode === 'audit' && (
+            <AuditMode
+                token={token}
+                auditTrips={auditTrips}
+                setAuditTrips={setAuditTrips}
+                auditTripId={auditTripId}
+                setAuditTripId={setAuditTripId}
+                auditData={auditData}
+                setAuditData={setAuditData}
+                auditLoading={auditLoading}
+                setAuditLoading={setAuditLoading}
+                auditMapReady={auditMapReady}
+                setAuditMapReady={setAuditMapReady}
+                auditMapRef={auditMapRef}
+            />
+            )}
         </div>
+    );
+}
+
+// ── Audit Mode Component ──────────────────────────────────────
+function AuditMode({ token, auditTrips, setAuditTrips, auditTripId, setAuditTripId, auditData, setAuditData, auditLoading, setAuditLoading, auditMapReady, setAuditMapReady, auditMapRef }) {
+
+    // Load completed trips
+    useEffect(() => {
+        if (!token) return;
+        setAuditLoading(true);
+        apiCall('GET', '/sales/trips?status=COMPLETED,PARTIAL_DELIVERED', null, token)
+            .then(data => {
+                const list = Array.isArray(data) ? data : (data?.data || []);
+                setAuditTrips(list);
+            })
+            .catch(() => setAuditTrips([]))
+            .finally(() => setAuditLoading(false));
+    }, [token]);
+
+    // Load audit data
+    const loadAudit = useCallback(async (tripId) => {
+        if (!tripId) { setAuditData(null); return; }
+        setAuditLoading(true);
+        try {
+            const [tripFullRes, routeRes] = await Promise.all([
+                apiCall('GET', `/sales/trips/${tripId}/full`, null, token),
+                apiCall('GET', `/vietmap/trips/${tripId}/route`, null, token),
+            ]);
+            const orders = tripFullRes?.orders || [];
+            const planGeometry = routeRes?.geometry || null;
+
+            const podPoints = orders
+                .filter(o =>
+                    o.delivery_latitude != null && o.delivery_longitude != null
+                    && Number.isFinite(Number(o.delivery_latitude))
+                    && Number.isFinite(Number(o.delivery_longitude))
+                )
+                .map(o => {
+                    const planLat = Number(o.partner_latitude);
+                    const planLng = Number(o.partner_longitude);
+                    const actualLat = Number(o.delivery_latitude);
+                    const actualLng = Number(o.delivery_longitude);
+                    const deviation = haversineDistance(planLat, planLng, actualLat, actualLng);
+                    return {
+                        partner_id: o.partner_id,
+                        partner_name: o.partner_name,
+                        stop_order: o.stop_order,
+                        plan_lat: isNaN(planLat) ? null : planLat,
+                        plan_lng: isNaN(planLng) ? null : planLng,
+                        actual_lat: actualLat,
+                        actual_lng: actualLng,
+                        delivery_status: o.pod_delivery_status || o.delivery_status || null,
+                        pod_id: o.pod_id || null,
+                        deviation_m: (o.partner_latitude && o.partner_longitude) ? deviation : 0,
+                    };
+                });
+
+            const deviations = podPoints.map(p => p.deviation_m).filter(d => d > 0);
+            const avgDeviation = deviations.length ? Math.round(deviations.reduce((a, b) => a + b, 0) / deviations.length) : 0;
+            const maxDeviation = deviations.length ? Math.max(...deviations) : 0;
+            const overdueCount = deviations.filter(d => d > 500).length;
+
+            setAuditData({
+                trip: tripFullRes,
+                plan_geometry: planGeometry,
+                plan_distance_m: routeRes?.distance_m || 0,
+                pod_points: podPoints,
+                stats: { total_stops: podPoints.length, avg_deviation_m: avgDeviation, max_deviation_m: maxDeviation, overdue_stops: overdueCount },
+            });
+        } catch (e) {
+            setAuditData(null);
+        } finally {
+            setAuditLoading(false);
+        }
+    }, [token]);
+
+    useEffect(() => {
+        if (auditTripId) loadAudit(auditTripId);
+        else setAuditData(null);
+    }, [auditTripId, loadAudit]);
+
+    // Build map points
+    const planPoints = auditData
+        ? auditData.pod_points.map(p => ({
+            id: `plan-${p.partner_id}`,
+            lat: p.plan_lat ?? p.actual_lat,
+            lng: p.plan_lng ?? p.actual_lng,
+            label: `${p.stop_order}. ${p.partner_name}`,
+            color: PLAN_COLOR,
+            metadata: { ...p },
+        }))
+        : [];
+
+    const actualDotsGeoJSON = auditData
+        ? {
+            type: 'FeatureCollection',
+            features: auditData.pod_points.map(p => ({
+                type: 'Feature',
+                geometry: { type: 'Point', coordinates: [p.actual_lng, p.actual_lat] },
+                properties: { partner_id: p.partner_id, partner_name: p.partner_name, stop_order: p.stop_order, deviation_m: p.deviation_m, delivery_status: p.delivery_status },
+            })),
+          }
+        : null;
+
+    const stats = auditData?.stats;
+    const planDistKm = auditData?.plan_distance_m ? (auditData.plan_distance_m / 1000).toFixed(1) : null;
+
+    return (
+        <div>
+            {/* Trip selector */}
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+                <select className="input" value={auditTripId} onChange={e => setAuditTripId(e.target.value)} style={{ maxWidth: 320 }} disabled={auditLoading}>
+                    <option value="">— Chọn chuyến đã hoàn thành —</option>
+                    {auditTrips.map(t => (
+                        <option key={t.trip_id} value={t.trip_id}>{t.trip_number} — {t.driver_name || '—'} — {t.status}</option>
+                    ))}
+                </select>
+                {auditLoading && <span style={{ fontSize: '0.8rem', color: '#6B7280' }}>⏳ Đang tải...</span>}
+            </div>
+
+            {/* Stats */}
+            {stats && (
+                <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 6, padding: '10px 14px', marginBottom: 12, fontSize: '0.85rem' }}>
+                    <div><span style={{ color: '#6B7280' }}>Tổng điểm dừng: </span><strong>{stats.total_stops}</strong></div>
+                    {planDistKm && <div><span style={{ color: '#6B7280' }}>Lộ trình kế hoạch: </span><strong>{planDistKm} km</strong></div>}
+                    <div><span style={{ color: '#6B7280' }}>Độ lệch TB: </span><strong style={{ color: stats.avg_deviation_m > 200 ? '#DC2626' : '#059669' }}>{stats.avg_deviation_m} m</strong></div>
+                    <div><span style={{ color: '#6B7280' }}>Độ lệch MAX: </span><strong style={{ color: stats.max_deviation_m > 500 ? '#DC2626' : '#92400E' }}>{stats.max_deviation_m} m</strong></div>
+                    {stats.overdue_stops > 0 && <div><span style={{ color: '#DC2626' }}>⚠️ Lệch &gt;500m: </span><strong style={{ color: '#DC2626' }}>{stats.overdue_stops}</strong></div>}
+                </div>
+            )}
+
+            {/* Legend */}
+            {auditData && (
+                <div style={{ display: 'flex', gap: 20, fontSize: '0.8rem', color: '#374151', marginBottom: 8, flexWrap: 'wrap' }}>
+                    <span><span style={{ display: 'inline-block', width: 20, height: 3, background: PLAN_COLOR, borderRadius: 2, verticalAlign: 'middle', marginRight: 4 }}></span>Lộ trình kế hoạch</span>
+                    <span><span style={{ display: 'inline-block', width: 10, height: 10, background: ACTUAL_COLOR, borderRadius: '50%', border: '2px solid #fff', verticalAlign: 'middle', marginRight: 4 }}></span>Vị trí thực tế POD</span>
+                </div>
+            )}
+
+            {/* Map + Table */}
+            {auditData && planPoints.length > 0 && (
+                <div>
+                    <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 12 }}>
+                        <AuditMapEmbed
+                            planPoints={planPoints}
+                            actualDotsGeoJSON={actualDotsGeoJSON}
+                            planGeometry={auditData.plan_geometry}
+                            onMapReady={(map) => { auditMapRef.current = map; setAuditMapReady(true); }}
+                        />
+                    </div>
+
+                    {/* POD Table */}
+                    <div className="card">
+                        <div className="card-header"><h4 style={{ margin: 0, fontSize: '0.95rem' }}>📋 Chi tiết từng điểm dừng</h4></div>
+                        <div style={{ overflowX: 'auto' }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+                                <thead>
+                                    <tr style={{ background: '#F9FAFB', borderBottom: '1px solid #E5E7EB' }}>
+                                        <th style={{ padding: '6px 10px', textAlign: 'left' }}>#</th>
+                                        <th style={{ padding: '6px 10px', textAlign: 'left' }}>Khách hàng</th>
+                                        <th style={{ padding: '6px 10px', textAlign: 'right' }}>Plan Lat</th>
+                                        <th style={{ padding: '6px 10px', textAlign: 'right' }}>Plan Lng</th>
+                                        <th style={{ padding: '6px 10px', textAlign: 'right' }}>Actual Lat</th>
+                                        <th style={{ padding: '6px 10px', textAlign: 'right' }}>Actual Lng</th>
+                                        <th style={{ padding: '6px 10px', textAlign: 'right' }}>Độ lệch</th>
+                                        <th style={{ padding: '6px 10px', textAlign: 'left' }}>Trạng thái</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {auditData.pod_points.map(p => (
+                                        <tr key={p.partner_id} style={{ borderBottom: '1px solid #F3F4F6' }}>
+                                            <td style={{ padding: '5px 10px', fontWeight: 600 }}>{p.stop_order}</td>
+                                            <td style={{ padding: '5px 10px' }}>{p.partner_name}</td>
+                                            <td style={{ padding: '5px 10px', textAlign: 'right', color: '#6B7280' }}>{p.plan_lat ? p.plan_lat.toFixed(5) : '—'}</td>
+                                            <td style={{ padding: '5px 10px', textAlign: 'right', color: '#6B7280' }}>{p.plan_lng ? p.plan_lng.toFixed(5) : '—'}</td>
+                                            <td style={{ padding: '5px 10px', textAlign: 'right' }}>{p.actual_lat.toFixed(5)}</td>
+                                            <td style={{ padding: '5px 10px', textAlign: 'right' }}>{p.actual_lng.toFixed(5)}</td>
+                                            <td style={{ padding: '5px 10px', textAlign: 'right', fontWeight: p.deviation_m > 500 ? 700 : 400, color: p.deviation_m > 500 ? '#DC2626' : p.deviation_m > 200 ? '#D97706' : '#059669' }}>
+                                                {p.deviation_m > 0 ? `${p.deviation_m} m` : '—'}
+                                            </td>
+                                            <td style={{ padding: '5px 10px' }}>
+                                                <span style={{ fontSize: '0.7rem', padding: '1px 6px', borderRadius: 10, background: p.delivery_status === 'DELIVERED' ? '#D1FAE5' : '#FEE2E2', color: p.delivery_status === 'DELIVERED' ? '#065F46' : '#991B1B' }}>
+                                                    {p.delivery_status || 'N/A'}
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {!auditTripId && !auditLoading && (
+                <div style={{ textAlign: 'center', padding: '60px 20px', color: '#9CA3AF', fontSize: '0.9rem' }}>
+                    Chọn một chuyến xe đã hoàn thành để xem so sánh lộ trình kế hoạch và thực tế.
+                </div>
+            )}
+        </div>
+    );
+}
+
+// ── Audit Map Embed (inner map với actual dots) ──────────────
+function AuditMapEmbed({ planPoints, actualDotsGeoJSON, planGeometry, onMapReady }) {
+    const [mapReady, setMapReady] = useState(false);
+
+    function handleMapReady(map) {
+        setMapReady(true);
+        onMapReady && onMapReady(map);
+    }
+
+    // Add actual dots layer
+    useEffect(() => {
+        if (!mapReady || !auditMapRef?.current || !actualDotsGeoJSON) return;
+        const map = auditMapRef.current;
+        const vietmap = window.vietmapgl;
+        if (!vietmap) return;
+
+        if (map.getLayer('audit-actual-dots-layer'))  map.removeLayer('audit-actual-dots-layer');
+        if (map.getSource('audit-actual-dots'))       map.removeSource('audit-actual-dots');
+
+        map.addSource('audit-actual-dots', { type: 'geojson', data: actualDotsGeoJSON });
+        map.addLayer({
+            id: 'audit-actual-dots-layer',
+            type: 'circle',
+            source: 'audit-actual-dots',
+            paint: { 'circle-radius': 7, 'circle-color': ACTUAL_COLOR, 'circle-stroke-color': '#fff', 'circle-stroke-width': 2, 'circle-opacity': 0.9 },
+        });
+
+        map.on('click', 'audit-actual-dots-layer', (e) => {
+            const props = e.features?.[0]?.properties;
+            if (!props) return;
+            const coords = e.features[0].geometry.coordinates.slice();
+            new vietmap.Popup({ offset: 20 })
+                .setLngLat(coords)
+                .setHTML(`<div style="font-family:sans-serif;font-size:13px;min-width:180px;"><strong>${props.stop_order}. ${props.partner_name}</strong><br/><span style="color:#EF4444;">● Vị trí thực tế POD</span><br/>Độ lệch: <strong>${props.deviation_m} m</strong><br/>Trạng thái: ${props.delivery_status || 'N/A'}</div>`)
+                .addTo(map);
+        });
+        map.on('mouseenter', 'audit-actual-dots-layer', () => { map.getCanvas().style.cursor = 'pointer'; });
+        map.on('mouseleave', 'audit-actual-dots-layer', () => { map.getCanvas().style.cursor = ''; });
+
+        return () => {
+            if (map.getLayer('audit-actual-dots-layer')) map.removeLayer('audit-actual-dots-layer');
+            if (map.getSource('audit-actual-dots')) map.removeSource('audit-actual-dots');
+        };
+    }, [mapReady, actualDotsGeoJSON]);
+
+    return (
+        <VietmapMap
+            points={planPoints}
+            height="500px"
+            fitBounds={true}
+            draggable={false}
+            routeGeometry={planGeometry}
+            routeColor={PLAN_COLOR}
+            routeWidth={3}
+            routeOpacity={0.8}
+            onMapReady={handleMapReady}
+        />
     );
 }

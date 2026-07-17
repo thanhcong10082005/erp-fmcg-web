@@ -12,7 +12,6 @@ import ReportsPage from './pages/ReportsPage';
 import RbacAdminPage from './pages/RbacAdminPage';
 import LogisticsPage from './pages/LogisticsPage';
 import DispatcherMapPage from './pages/DispatcherMapPage';
-import AuditMapPage from './pages/AuditMapPage';
 import PaymentsPage from './pages/PaymentsPage';
 import MfaSetup from './components/MfaSetup';
 import MfaVerify from './components/MfaVerify';
@@ -70,7 +69,6 @@ const NAV_ITEMS = [
     { id: 'sales', label: 'Đơn bán hàng', icon: '🛒' },
     { id: 'logistics', label: 'Giao hàng', icon: '🚚' },
     { id: 'dispatcher-map', label: 'Bản đồ điều phối', icon: '🗺️' },
-    { id: 'audit-map', label: 'Audit Map', icon: '🔍' },
     { id: 'warehouse', label: 'Kho & Tồn kho', icon: '🏭' },
     { id: 'invoices', label: 'Hóa đơn', icon: '🧾' },
     { id: 'payments', label: 'Thu chi', icon: '💳' },
@@ -203,16 +201,24 @@ function ErpAppShell() {
     return (
         <div className="app">
             <div className="topbar">
-                <h1>🏢 ERP-FMCG</h1>
+                <h1
+                    onClick={() => setSection('dashboard')}
+                    style={{ cursor: 'pointer', userSelect: 'none' }}
+                    title="Về Dashboard"
+                >🏢 ERP-FMCG</h1>
                 <div className="flex">
-                    <span className="badge" style={{ background: 'var(--primary)' }}>{user?.email}</span>
+                    <span className="badge" style={{ background: 'rgba(255,255,255,0.25)' }}>{user?.email}</span>
                     {userRole && (
-                        <span className="badge" style={{ background: mfaState?.mfa_required ? '#DC2626' : 'var(--success)' }}>
+                        <span className="badge" style={{ background: mfaState?.mfa_required ? '#DC2626' : '#10B981' }}>
                             {userRole} {mfaState?.mfa_required && '🔐'}
                         </span>
                     )}
-                    <button className="btn btn-outline btn-sm" onClick={handleLogout}
-                        style={{ color: '#fff', borderColor: '#6B7280' }}>Đăng xuất</button>
+                    <button
+                        className="btn-logout"
+                        onClick={handleLogout}
+                    >
+                        🚪 Đăng xuất
+                    </button>
                 </div>
             </div>
 
@@ -247,7 +253,6 @@ function ErpAppShell() {
                     {section === 'invoices' && <InvoicesPage token={jwtToken}/>}
                     {section === 'logistics' && <LogisticsPage token={jwtToken}/>}
                     {section === 'dispatcher-map' && <DispatcherMapPage token={jwtToken} userRole={userRole}/>}
-                    {section === 'audit-map' && <AuditMapPage token={jwtToken}/>}
                     {section === 'payments' && <PaymentsPage token={jwtToken}/>}
                     {section === 'reports' && <ReportsPage token={jwtToken}/>}
                     {section === 'rbac' && <RbacAdminPage token={jwtToken}/>}

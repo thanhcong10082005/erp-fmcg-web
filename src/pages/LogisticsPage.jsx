@@ -84,6 +84,16 @@ export default function LogisticsPage({ token }) {
         } catch (e) { setErr(e.message); }
     }, [token, trips, selectedTrip]);
 
+    // Tính delivered_count và tiền thu từ orders/pod
+    const getTripStats = (t) => {
+        const tripOrders = t.orders || [];
+        const delivered = tripOrders.filter(o => o.pod_id || o.delivery_status === 'DELIVERED').length;
+        // Tiền từ orders (đã giao = orders đã có pod)
+        const cash = tripOrders.filter(o => o.pod_id).reduce((sum, o) => sum + (Number(o.new_order_cash) || 0), 0);
+        const transfer = tripOrders.filter(o => o.pod_id).reduce((sum, o) => sum + (Number(o.new_order_transfer) || 0), 0);
+        return { delivered, cash, transfer };
+    };
+
     const loadTripDetails = useCallback(async (tripId) => {
         try {
             const data = await apiCall('GET', `/sales/trips/${tripId}`, null, token);
@@ -217,20 +227,20 @@ export default function LogisticsPage({ token }) {
                                     </thead>
                                     <tbody>
                                         {trips.map(t => (
-                                            <tr key={t.trip_id} style={{ 
-                                                background: t.status === 'COMPLETED' ? '#F0FDF4' : 
+                                            <tr key={t.trip_id} style={{
+                                                background: t.status === 'COMPLETED' ? '#F0FDF4' :
                                                            t.status === 'DELIVERING' ? '#FEF3C7' : 'transparent'
                                             }}>
                                                 <td><code>{t.trip_number}</code></td>
-                                                <td>{fmt.date(t.trip_date)}</td>
+                                                <td>{fmt.dateOnly(t.trip_date)}</td>
                                                 <td>{t.driver_name || '—'}</td>
                                                 <td>{t.vehicle_plate || '—'}</td>
                                                 <td>{t.total_orders || 0}</td>
-                                                <td style={{ color: '#10B981' }}>{t.delivered_count || 0}</td>
+                                                <td style={{ color: '#10B981' }}>{getTripStats(t).delivered}</td>
                                                 <td style={{ color: '#DC2626' }}>{t.failed_count || 0}</td>
                                                 <td>
-                                                    <div>Tiền mặt: {fmt.vnd(t.total_cash || 0)}</div>
-                                                    <div>Chuyển khoản: {fmt.vnd(t.total_transfer || 0)}</div>
+                                                    <div>Tiền mặt: {fmt.vnd(getTripStats(t).cash)}</div>
+                                                    <div>CK: {fmt.vnd(getTripStats(t).transfer)}</div>
                                                 </td>
                                                 <td>
                                                     <span style={{
@@ -298,7 +308,7 @@ export default function LogisticsPage({ token }) {
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 16 }}>
                                 <div style={{ background: '#F3F4F6', padding: 12, borderRadius: 8 }}>
                                     <div style={{ fontSize: '0.75rem', color: '#6B7280' }}>Ngày</div>
-                                    <div style={{ fontWeight: 600 }}>{fmt.date(selectedTrip.trip_date)}</div>
+                                    <div style={{ fontWeight: 600 }}>{fmt.dateOnly(selectedTrip.trip_date)}</div>
                                 </div>
                                 <div style={{ background: '#F3F4F6', padding: 12, borderRadius: 8 }}>
                                     <div style={{ fontSize: '0.75rem', color: '#6B7280' }}>Tài xế</div>
@@ -321,12 +331,23 @@ export default function LogisticsPage({ token }) {
                                     <div style={{ fontSize: '0.75rem', color: '#92400E' }}>Tổng đơn</div>
                                 </div>
                                 <div style={{ background: '#DCFCE7', padding: 12, borderRadius: 8, textAlign: 'center' }}>
-                                    <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#16A34A' }}>{selectedTrip.delivered_count || 0}</div>
+                                    <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#16A34A' }}>{getTripStats(selectedTrip).delivered}</div>
                                     <div style={{ fontSize: '0.75rem', color: '#166534' }}>Đã giao</div>
                                 </div>
                                 <div style={{ background: '#FEE2E2', padding: 12, borderRadius: 8, textAlign: 'center' }}>
                                     <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#DC2626' }}>{selectedTrip.failed_count || 0}</div>
                                     <div style={{ fontSize: '0.75rem', color: '#991B1B' }}>Thất bại</div>
+                                </div>
+                            </div>
+                            {/* Money stats */}
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12, marginTop: 12 }}>
+                                <div style={{ background: '#F0FDF4', padding: 12, borderRadius: 8, textAlign: 'center' }}>
+                                    <div style={{ fontSize: '0.75rem', color: '#166534' }}>Tiền mặt</div>
+                                    <div style={{ fontSize: '1.1rem', fontWeight: 800, color: '#16A34A' }}>{fmt.vnd(getTripStats(selectedTrip).cash)}</div>
+                                </div>
+                                <div style={{ background: '#EFF6FF', padding: 12, borderRadius: 8, textAlign: 'center' }}>
+                                    <div style={{ fontSize: '0.75rem', color: '#1E40AF' }}>Chuyển khoản</div>
+                                    <div style={{ fontSize: '1.1rem', fontWeight: 800, color: '#2563EB' }}>{fmt.vnd(getTripStats(selectedTrip).transfer)}</div>
                                 </div>
                             </div>
                         </div>
@@ -375,11 +396,11 @@ export default function LogisticsPage({ token }) {
                                                     <td style={{ fontWeight: 600 }}>{fmt.vnd(o.total_amount)}</td>
                                                     <td>
                                                         <span style={{
-                                                            background: (STATUS_COLORS[o.status] || '#6B7280') + '20',
-                                                            color: STATUS_COLORS[o.status] || '#6B7280',
+                                                            background: (STATUS_COLORS[o.pod_id ? 'DELIVERED' : (o.status || 'PENDING')] || '#6B7280') + '20',
+                                                            color: STATUS_COLORS[o.pod_id ? 'DELIVERED' : (o.status || 'PENDING')] || '#6B7280',
                                                             padding: '2px 8px', borderRadius: 4, fontSize: '0.75rem', fontWeight: 600
                                                         }}>
-                                                            {o.status}
+                                                            {o.pod_id ? 'DELIVERED' : (o.status || 'PENDING')}
                                                         </span>
                                                     </td>
                                                     <td>
@@ -612,10 +633,10 @@ export default function LogisticsPage({ token }) {
                                                         <td>{fmt.date(o.order_date)}</td>
                                                         <td>
                                                             <span style={{
-                                                                background: (STATUS_COLORS[o.status] || '#6B7280') + '20',
-                                                                color: STATUS_COLORS[o.status] || '#6B7280',
+                                                                background: (STATUS_COLORS[o.pod_id ? 'DELIVERED' : (o.status || 'PENDING')] || '#6B7280') + '20',
+                                                                color: STATUS_COLORS[o.pod_id ? 'DELIVERED' : (o.status || 'PENDING')] || '#6B7280',
                                                                 padding: '2px 8px', borderRadius: 4, fontSize: '0.7rem', fontWeight: 600
-                                                            }}>{o.status}</span>
+                                                            }}>{o.pod_id ? 'DELIVERED' : (o.status || 'PENDING')}</span>
                                                         </td>
                                                         <td style={{ fontWeight: 600 }}>{fmt.vnd(o.total_amount)}</td>
                                                         <td>

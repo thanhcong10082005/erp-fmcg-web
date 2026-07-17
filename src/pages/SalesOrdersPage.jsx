@@ -232,14 +232,15 @@ export default function SalesOrdersPage({ token }) {
                                                 <span className="text-sm text-muted">{o.partner_code}</span>
                                             </td>
                                             <td>{o.warehouse_name}</td>
-                                            <td><strong>{fmt.vnd(o.total_amount)}</strong></td>
-                                            <td>{fmt.vnd(o.paid_amount)}</td>
-                                            <td><StatusBadge s={o.payment_status} /></td>
+                                            <td><strong>{fmt.vnd(Number(o.total_amount) || 0)}</strong></td>
+                                            <td style={{ color: (Number(o.paid_amount) || 0) > 0 ? '#059669' : '#6B7280', fontWeight: (Number(o.paid_amount) || 0) > 0 ? 600 : 400 }}>
+                                                {fmt.vnd(Number(o.paid_amount) || 0)}
+                                            </td>
+                                            <td><StatusBadge s={(Number(o.paid_amount) || 0) >= (Number(o.total_amount) || 0) && (Number(o.total_amount) || 0) > 0 ? 'PAID' : ((Number(o.paid_amount) || 0) > 0 ? 'PARTIAL' : 'UNPAID')} /></td>
                                             <td><StatusBadge s={o.status} /></td>
                                             <td>
                                                 <button className="btn btn-sm btn-outline" onClick={() => viewDetail(o.so_id)}>👁️</button>
                                                 {o.status === 'DRAFT' && <button className="btn btn-sm btn-success" onClick={() => handleAction(o.so_id, 'confirm')}>✓ Duyệt</button>}
-                                                {o.status === 'CONFIRMED' && <button className="btn btn-sm btn-primary" onClick={() => handleAction(o.so_id, 'deliver')}>🚚 Giao hàng</button>}
                                                 {['DRAFT', 'CONFIRMED'].includes(o.status) && <button className="btn btn-sm btn-danger" onClick={() => handleAction(o.so_id, 'cancel')}>✗ Hủy</button>}
                                             </td>
                                         </tr>
@@ -261,7 +262,6 @@ export default function SalesOrdersPage({ token }) {
                         <h3>📄 Chi tiết đơn {selected.so_number}</h3>
                         <div className="flex">
                             {selected.status === 'DRAFT' && <button className="btn btn-success btn-sm" onClick={() => { handleAction(selected.so_id, 'confirm'); }}>✓ Duyệt đơn</button>}
-                            {selected.status === 'CONFIRMED' && <button className="btn btn-primary btn-sm" onClick={() => { handleAction(selected.so_id, 'deliver'); }}>🚚 Giao hàng</button>}
                             {['DRAFT', 'CONFIRMED'].includes(selected.status) && <button className="btn btn-danger btn-sm" onClick={() => { handleAction(selected.so_id, 'cancel'); }}>✗ Hủy</button>}
                             <button className="btn btn-outline btn-sm" onClick={() => setSelected(null)}>✕</button>
                         </div>

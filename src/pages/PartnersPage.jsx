@@ -205,30 +205,13 @@ export default function PartnersPage({ token }) {
                 </div>
             </div>
 
-            {/* Stats Summary */}
-            <div style={{ display: 'flex', gap: 12, margin: '16px 0', flexWrap: 'wrap' }}>
-                {PARTNER_TYPES.map(t => {
-                    const count = partners.filter(p => p.partner_type === t).length;
-                    return (
-                        <div key={t} style={{
-                            background: getTypeBadgeColor(t) + '15',
-                            border: `1px solid ${getTypeBadgeColor(t)}40`,
-                            borderRadius: 8, padding: '8px 16px', textAlign: 'center',
-                        }}>
-                            <div style={{ fontSize: '1.5rem', fontWeight: 800, color: getTypeBadgeColor(t) }}>{count}</div>
-                            <div style={{ fontSize: '0.75rem', color: '#6B7280' }}>{t}</div>
-                        </div>
-                    );
-                })}
-            </div>
-
             {/* List View */}
             {activeTab === 'list' && (
                 <div className="card">
                     <div className="card-header">
                         <h3>👥 Partners — Tổng cộng {total} mục</h3>
                         <div style={{ fontSize: '0.75rem', color: '#6B7280' }}>
-                            {partners.length > 0 && `Tổng công nợ trang này: ${fmt.vnd(partners.reduce((sum, p) => sum + (p.current_debt || 0), 0))}`}
+                            {partners.length > 0 && `Tổng công nợ trang này: ${fmt.vnd(partners.reduce((sum, p) => sum + (Number(p.current_debt) || 0), 0))}`}
                         </div>
                     </div>
                     <div className="card-body">
@@ -241,9 +224,7 @@ export default function PartnersPage({ token }) {
                                             <th>Mã</th>
                                             <th>Tên</th>
                                             <th>Loại</th>
-                                            <th>Điện thoại</th>
                                             <th>Tuyến</th>
-                                            <th>DCR</th>
                                             <th>Công nợ</th>
                                             <th>Trạng thái</th>
                                             <th></th>
@@ -266,16 +247,15 @@ export default function PartnersPage({ token }) {
                                                         {p.partner_type}
                                                     </span>
                                                 </td>
-                                                <td>{p.phone || '—'}</td>
                                                 <td>
-                                                    {p.route_code && <code style={{ fontSize: '0.75rem' }}>{p.route_code}</code>}
-                                                    {p.route_type && <span style={{ fontSize: '0.7rem', color: '#6B7280' }}> ({p.route_type})</span>}
+                                                    {p.route_code ? (
+                                                        <code style={{ fontSize: '0.8rem', background: '#F3F4F6', padding: '2px 6px', borderRadius: 4 }}>
+                                                            {p.route_code}
+                                                        </code>
+                                                    ) : '—'}
                                                 </td>
-                                                <td>
-                                                    {p.dcr_code && <code style={{ fontSize: '0.75rem' }}>{p.dcr_code}</code>}
-                                                </td>
-                                                <td style={{ color: (p.current_debt || 0) > 0 ? '#DC2626' : '#10B981' }}>
-                                                    {fmt.vnd(p.current_debt || 0)}
+                                                <td style={{ color: (Number(p.current_debt) || 0) > 0 ? '#DC2626' : '#10B981', fontWeight: 600 }}>
+                                                    {fmt.vnd(Number(p.current_debt) || 0)}
                                                 </td>
                                                 <td>{p.is_active ? '✅' : '❌'}</td>
                                                 <td>
@@ -287,7 +267,7 @@ export default function PartnersPage({ token }) {
                                         ))}
                                         {partners.length === 0 && (
                                             <tr>
-                                                <td colSpan={9} style={{ textAlign: 'center', padding: 20, color: '#6B7280' }}>
+                                                <td colSpan={7} style={{ textAlign: 'center', padding: 20, color: '#6B7280' }}>
                                                     {total === 0 ? 'Không có partners' : `Trang ${page} trống — quay về trang 1`}
                                                 </td>
                                             </tr>
