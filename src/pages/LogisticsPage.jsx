@@ -236,11 +236,11 @@ export default function LogisticsPage({ token }) {
                                                 <td>{t.driver_name || '—'}</td>
                                                 <td>{t.vehicle_plate || '—'}</td>
                                                 <td>{t.total_orders || 0}</td>
-                                                <td style={{ color: '#10B981' }}>{getTripStats(t).delivered}</td>
+                                                <td style={{ color: '#10B981' }}>{t.delivered_count || 0}</td>
                                                 <td style={{ color: '#DC2626' }}>{t.failed_count || 0}</td>
                                                 <td>
-                                                    <div>Tiền mặt: {fmt.vnd(getTripStats(t).cash)}</div>
-                                                    <div>CK: {fmt.vnd(getTripStats(t).transfer)}</div>
+                                                    <div>Tiền mặt: {fmt.vnd(Number(t.total_cash) || 0)}</div>
+                                                    <div>CK: {fmt.vnd(Number(t.total_transfer) || 0)}</div>
                                                 </td>
                                                 <td>
                                                     <span style={{

@@ -97,12 +97,12 @@ export default function ReportsPage({ token }) {
                                                 {revenue.map((r, i) => (
                                                     <tr key={i}>
                                                         <td>{fmt.dateOnly(r.period)}</td>
-                                                        <td>{r.invoice_count || 0}</td>
+                                                        <td>{r.order_count || 0}</td>
                                                         <td>{fmt.vnd(Number(r.revenue) || 0)}</td>
-                                                        <td>{fmt.vnd(Number(r.revenue_tax) || 0)}</td>
-                                                        <td>{fmt.vnd(Number(r.revenue_discount) || 0)}</td>
-                                                        <td><strong>{fmt.vnd(Number(r.revenue_total) || 0)}</strong></td>
-                                                        <td>{fmt.vnd(Number(r.revenue_collected) || 0)}</td>
+                                                        <td>{fmt.vnd(Number(r.tax) || 0)}</td>
+                                                        <td>{fmt.vnd(Number(r.discount) || 0)}</td>
+                                                        <td><strong>{fmt.vnd(Number(r.total) || 0)}</strong></td>
+                                                        <td>{fmt.vnd(Number(r.collected) || 0)}</td>
                                                     </tr>
                                                 ))}
                                             </tbody>
