@@ -99,6 +99,13 @@ function PermissionsTab({ token }) {
         return roleRows.length;
     };
 
+    // Compute user_count từ API (user_count trong response)
+    // Hoặc fallback bằng 0 nếu API không trả về
+    const getUserCountForRole = (roleCode) => {
+        const r = roles.find(x => x.role_code === roleCode);
+        return r ? (r.user_count || 0) : 0;
+    };
+
     return (
         <div>
             <div className="card">
@@ -317,12 +324,7 @@ function UsersTab({ token }) {
     };
 
     // Compute user_count từ users list
-    const getUserCountForRole = (roleCode) => {
-        return users.filter(u => {
-            const userRole = roles.find(r => r.role_id === u.primary_role_id);
-            return userRole && userRole.role_code === roleCode;
-        }).length;
-    };
+    // NOTE: getUserCountForRole đã được định nghĩa trong PermissionsTab
 
     return (
         <div>
