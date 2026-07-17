@@ -424,13 +424,7 @@ export default function VietmapMap({
 
   // ── Phase L: Batch selection drawing ────────────────────────────
   useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !mapReady) return;
-
-    const container = containerRef.current;
-    if (!container) return;
-
-    if (!batchMode) {
+    if (!batchMode || !mapReady) {
       // Clean up drawing overlay
       if (drawOverlayRef.current) {
         drawOverlayRef.current.remove();
@@ -439,6 +433,12 @@ export default function VietmapMap({
       drawStartRef.current = null;
       return;
     }
+
+    const map = mapRef.current;
+    if (!map) return;
+
+    const container = containerRef.current;
+    if (!container) return;
 
     // Create overlay div for drawing rectangle
     const overlay = document.createElement('div');
@@ -453,6 +453,7 @@ export default function VietmapMap({
 
     const onMouseDown = (e) => {
       if (e.button !== 0) return; // only left click
+      e.stopPropagation(); // Prevent map default drag
       isDrawing = true;
       drawStartRef.current = { x: e.offsetX, y: e.offsetY };
       overlay.style.cursor = 'crosshair';
@@ -519,15 +520,15 @@ export default function VietmapMap({
     };
 
     container.style.cursor = 'crosshair';
-    container.addEventListener('mousedown', onMouseDown);
-    container.addEventListener('mousemove', onMouseMove);
-    container.addEventListener('mouseup', onMouseUp);
+    container.addEventListener('mousedown', onMouseDown, { capture: true });
+    container.addEventListener('mousemove', onMouseMove, { capture: true });
+    container.addEventListener('mouseup', onMouseUp, { capture: true });
     container.addEventListener('mouseleave', onMouseLeave);
 
     return () => {
-      container.removeEventListener('mousedown', onMouseDown);
-      container.removeEventListener('mousemove', onMouseMove);
-      container.removeEventListener('mouseup', onMouseUp);
+      container.removeEventListener('mousedown', onMouseDown, { capture: true });
+      container.removeEventListener('mousemove', onMouseMove, { capture: true });
+      container.removeEventListener('mouseup', onMouseUp, { capture: true });
       container.removeEventListener('mouseleave', onMouseLeave);
       container.style.cursor = '';
       if (drawOverlayRef.current) {
@@ -537,6 +538,34 @@ export default function VietmapMap({
       drawStartRef.current = null;
     };
   }, [batchMode, mapReady, onBatchRectChange, onBatchDrawComplete]);
+
+  // ── Disable map drag when batch mode is active ────────────────────
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+
+    if (batchMode) {
+      map.dragPan.disable();
+      map.scrollZoom.disable();
+      map.boxZoom.disable();
+      map.doubleClickZoom.disable();
+    } else {
+      map.dragPan.enable();
+      map.scrollZoom.enable();
+      map.boxZoom.enable();
+      map.doubleClickZoom.enable();
+    }
+
+    return () => {
+      // Re-enable on cleanup
+      if (map && !map.isRemoved?.()) {
+        map.dragPan.enable();
+        map.scrollZoom.enable();
+        map.boxZoom.enable();
+        map.doubleClickZoom.enable();
+      }
+    };
+  }, [batchMode, mapReady]);
 
   return (
     <div style={{ position: 'relative', height, width: '100%' }}>
