@@ -95,15 +95,15 @@ function PermissionsTab({ token }) {
 
     // Compute permission_count từ matrix data
     const getRolePermCount = (roleCode) => {
-        const roleRows = matrix.filter(row => row.role_code === roleCode);
-        return roleRows.length;
+        const r = roles.find(x => x.role_code === roleCode);
+        return r ? Number(r.permission_count || 0) : 0;
     };
 
     // Compute user_count từ API (user_count trong response)
     // Hoặc fallback bằng 0 nếu API không trả về
     const getUserCountForRole = (roleCode) => {
         const r = roles.find(x => x.role_code === roleCode);
-        return r ? (r.user_count || 0) : 0;
+        return r ? Number(r.user_count || 0) : 0;
     };
 
     return (

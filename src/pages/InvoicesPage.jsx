@@ -70,7 +70,7 @@ export default function InvoicesPage({ token }) {
                 </div>
                 <div className="card-body">
                     {err && <div className="alert alert-error">{err}</div>}
-                    {loading ? <div>�ang tải...</div> : (
+                    {loading ? <div>Đang tải...</div> : (
                         <div className="table-wrap">
                             <table>
                                 <thead>
