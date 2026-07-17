@@ -440,97 +440,114 @@ export default function VietmapMap({
     const container = containerRef.current;
     if (!container) return;
 
-    // Create overlay div for drawing rectangle
+    // Create overlay div for drawing rectangle - sits on TOP of everything
     const overlay = document.createElement('div');
+    overlay.id = 'batch-draw-overlay';
     overlay.style.cssText = `
       position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-      pointer-events: none; z-index: 10;
+      pointer-events: all;
+      z-index: 100;
+      cursor: crosshair;
     `;
     drawOverlayRef.current = overlay;
     container.appendChild(overlay);
 
     let isDrawing = false;
+    let currentRect = null;
 
     const onMouseDown = (e) => {
       if (e.button !== 0) return; // only left click
-      e.stopPropagation(); // Prevent map default drag
+      e.preventDefault();
+      e.stopPropagation();
       isDrawing = true;
-      drawStartRef.current = { x: e.offsetX, y: e.offsetY };
-      overlay.style.cursor = 'crosshair';
+      currentRect = { startX: e.clientX, startY: e.clientY, endX: e.clientX, endY: e.clientY };
+      drawStartRef.current = { x: e.clientX, y: e.clientY };
     };
 
     const onMouseMove = (e) => {
-      if (!isDrawing || !drawStartRef.current) return;
-      const start = drawStartRef.current;
-      const x = e.offsetX, y = e.offsetY;
-      const left = Math.min(start.x, x), top = Math.min(start.y, y);
-      const w = Math.abs(x - start.x), h = Math.abs(y - start.y);
+      if (!isDrawing || !currentRect) return;
+      currentRect.endX = e.clientX;
+      currentRect.endY = e.clientY;
+
+      const containerRect = container.getBoundingClientRect();
+      const left = Math.min(currentRect.startX, currentRect.endX) - containerRect.left;
+      const top = Math.min(currentRect.startY, currentRect.endY) - containerRect.top;
+      const w = Math.abs(currentRect.endX - currentRect.startX);
+      const h = Math.abs(currentRect.endY - currentRect.startY);
 
       // Update batch rect for external tracking
       if (onBatchRectChange) {
-        onBatchRectChange({ startX: start.x, startY: start.y, endX: x, endY: y });
+        onBatchRectChange({
+          startX: currentRect.startX - containerRect.left,
+          startY: currentRect.startY - containerRect.top,
+          endX: currentRect.endX - containerRect.left,
+          endY: currentRect.endY - containerRect.top
+        });
       }
 
       // Draw rectangle overlay
       overlay.innerHTML = `
-        <svg style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;">
+        <svg style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;overflow:visible;">
           <rect x="${left}" y="${top}" width="${w}" height="${h}"
             fill="rgba(5, 150, 105, 0.15)"
-            stroke="#059669" stroke-width="2"
-            stroke-dasharray="5,3"
+            stroke="#059669" stroke-width="3"
+            stroke-dasharray="8,4"
           />
         </svg>
       `;
     };
 
     const onMouseUp = (e) => {
-      if (!isDrawing) return;
+      if (!isDrawing || !currentRect) return;
       isDrawing = false;
-      overlay.style.cursor = '';
+      const dist = Math.sqrt((currentRect.endX - currentRect.startX) ** 2 + (currentRect.endY - currentRect.startY) ** 2);
 
-      const start = drawStartRef.current;
-      if (!start) return;
-      const x = e.offsetX, y = e.offsetY;
-
-      // Only trigger if dragged enough (avoid accidental click)
-      const dist = Math.sqrt((x - start.x) ** 2 + (y - start.y) ** 2);
       if (dist < 10) {
         // Too small, treat as click - ignore
         if (onBatchRectChange) onBatchRectChange(null);
+        currentRect = null;
+        drawStartRef.current = null;
+        overlay.innerHTML = '';
         return;
       }
 
-      // Complete rect
-      const rect = { startX: start.x, startY: start.y, endX: x, endY: y };
+      // Complete rect - convert to container-relative coords
+      const containerRect = container.getBoundingClientRect();
+      const rect = {
+        startX: currentRect.startX - containerRect.left,
+        startY: currentRect.startY - containerRect.top,
+        endX: currentRect.endX - containerRect.left,
+        endY: currentRect.endY - containerRect.top
+      };
+
       if (onBatchRectChange) onBatchRectChange(rect);
       if (onBatchDrawComplete) onBatchDrawComplete(map);
 
       // Clear overlay rect but keep overlay for next draw
-      overlay.innerHTML = '';
+      currentRect = null;
       drawStartRef.current = null;
+      overlay.innerHTML = '';
     };
 
     const onMouseLeave = () => {
       if (isDrawing) {
         isDrawing = false;
-        overlay.innerHTML = '';
-        if (onBatchRectChange) onBatchRectChange(null);
+        currentRect = null;
         drawStartRef.current = null;
+        overlay.innerHTML = '';
       }
     };
 
-    container.style.cursor = 'crosshair';
-    container.addEventListener('mousedown', onMouseDown, { capture: true });
-    container.addEventListener('mousemove', onMouseMove, { capture: true });
-    container.addEventListener('mouseup', onMouseUp, { capture: true });
-    container.addEventListener('mouseleave', onMouseLeave);
+    overlay.addEventListener('mousedown', onMouseDown);
+    overlay.addEventListener('mousemove', onMouseMove);
+    overlay.addEventListener('mouseup', onMouseUp);
+    overlay.addEventListener('mouseleave', onMouseLeave);
 
     return () => {
-      container.removeEventListener('mousedown', onMouseDown, { capture: true });
-      container.removeEventListener('mousemove', onMouseMove, { capture: true });
-      container.removeEventListener('mouseup', onMouseUp, { capture: true });
-      container.removeEventListener('mouseleave', onMouseLeave);
-      container.style.cursor = '';
+      overlay.removeEventListener('mousedown', onMouseDown);
+      overlay.removeEventListener('mousemove', onMouseMove);
+      overlay.removeEventListener('mouseup', onMouseUp);
+      overlay.removeEventListener('mouseleave', onMouseLeave);
       if (drawOverlayRef.current) {
         drawOverlayRef.current.remove();
         drawOverlayRef.current = null;
