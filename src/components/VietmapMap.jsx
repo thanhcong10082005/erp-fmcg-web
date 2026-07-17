@@ -172,6 +172,10 @@ export default function VietmapMap({
   const [mapReady, setMapReady] = useState(false);
   const [libError, setLibError] = useState(null);
 
+  // Phase L: Drawing state (managed by component, not refs)
+  const [drawing, setDrawing] = useState(false);
+  const [drawRect, setDrawRect] = useState(null); // { startX, startY, endX, endY } in container coords
+
   // ── Init VietMap GL JS ───────────────────────────────────────────
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -422,139 +426,62 @@ export default function VietmapMap({
     renderMarkers();
   }, [forceRender, renderMarkers]);
 
-  // ── Phase L: Batch selection drawing ────────────────────────────
-  useEffect(() => {
-    if (!batchMode || !mapReady) {
-      // Clean up drawing overlay
-      if (drawOverlayRef.current) {
-        drawOverlayRef.current.remove();
-        drawOverlayRef.current = null;
-      }
-      drawStartRef.current = null;
+  // ── Phase L: Batch selection - mouse event handlers ───────────────
+  // Handled via JSX overlay div (see below)
+  // These handlers are called from the JSX overlay div
+  const handleBatchMouseDown = useCallback((e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    setDrawing(true);
+    setDrawRect({
+      startX: e.clientX - rect.left,
+      startY: e.clientY - rect.top,
+      endX: e.clientX - rect.left,
+      endY: e.clientY - rect.top
+    });
+  }, []);
+
+  const handleBatchMouseMove = useCallback((e) => {
+    if (!drawing || !drawRect) return;
+    e.preventDefault();
+
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    setDrawRect(prev => ({
+      ...prev,
+      endX: e.clientX - rect.left,
+      endY: e.clientY - rect.top
+    }));
+  }, [drawing, drawRect]);
+
+  const handleBatchMouseUp = useCallback((e) => {
+    if (!drawing || !drawRect) return;
+    e.preventDefault();
+
+    const dist = Math.sqrt((drawRect.endX - drawRect.startX) ** 2 + (drawRect.endY - drawRect.startY) ** 2);
+
+    if (dist < 10) {
+      // Too small, cancel
+      setDrawing(false);
+      setDrawRect(null);
       return;
     }
 
-    const map = mapRef.current;
-    if (!map) return;
+    // Complete - notify parent
+    if (onBatchRectChange) onBatchRectChange(drawRect);
+    if (onBatchDrawComplete && mapRef.current) {
+      onBatchDrawComplete(mapRef.current);
+    }
 
-    const container = containerRef.current;
-    if (!container) return;
-
-    // Create overlay div for drawing rectangle - sits on TOP of everything
-    const overlay = document.createElement('div');
-    overlay.id = 'batch-draw-overlay';
-    overlay.style.cssText = `
-      position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-      pointer-events: all;
-      z-index: 100;
-      cursor: crosshair;
-    `;
-    drawOverlayRef.current = overlay;
-    container.appendChild(overlay);
-
-    let isDrawing = false;
-    let currentRect = null;
-
-    const onMouseDown = (e) => {
-      if (e.button !== 0) return; // only left click
-      e.preventDefault();
-      e.stopPropagation();
-      isDrawing = true;
-      currentRect = { startX: e.clientX, startY: e.clientY, endX: e.clientX, endY: e.clientY };
-      drawStartRef.current = { x: e.clientX, y: e.clientY };
-    };
-
-    const onMouseMove = (e) => {
-      if (!isDrawing || !currentRect) return;
-      currentRect.endX = e.clientX;
-      currentRect.endY = e.clientY;
-
-      const containerRect = container.getBoundingClientRect();
-      const left = Math.min(currentRect.startX, currentRect.endX) - containerRect.left;
-      const top = Math.min(currentRect.startY, currentRect.endY) - containerRect.top;
-      const w = Math.abs(currentRect.endX - currentRect.startX);
-      const h = Math.abs(currentRect.endY - currentRect.startY);
-
-      // Update batch rect for external tracking
-      if (onBatchRectChange) {
-        onBatchRectChange({
-          startX: currentRect.startX - containerRect.left,
-          startY: currentRect.startY - containerRect.top,
-          endX: currentRect.endX - containerRect.left,
-          endY: currentRect.endY - containerRect.top
-        });
-      }
-
-      // Draw rectangle overlay
-      overlay.innerHTML = `
-        <svg style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;overflow:visible;">
-          <rect x="${left}" y="${top}" width="${w}" height="${h}"
-            fill="rgba(5, 150, 105, 0.15)"
-            stroke="#059669" stroke-width="3"
-            stroke-dasharray="8,4"
-          />
-        </svg>
-      `;
-    };
-
-    const onMouseUp = (e) => {
-      if (!isDrawing || !currentRect) return;
-      isDrawing = false;
-      const dist = Math.sqrt((currentRect.endX - currentRect.startX) ** 2 + (currentRect.endY - currentRect.startY) ** 2);
-
-      if (dist < 10) {
-        // Too small, treat as click - ignore
-        if (onBatchRectChange) onBatchRectChange(null);
-        currentRect = null;
-        drawStartRef.current = null;
-        overlay.innerHTML = '';
-        return;
-      }
-
-      // Complete rect - convert to container-relative coords
-      const containerRect = container.getBoundingClientRect();
-      const rect = {
-        startX: currentRect.startX - containerRect.left,
-        startY: currentRect.startY - containerRect.top,
-        endX: currentRect.endX - containerRect.left,
-        endY: currentRect.endY - containerRect.top
-      };
-
-      if (onBatchRectChange) onBatchRectChange(rect);
-      if (onBatchDrawComplete) onBatchDrawComplete(map);
-
-      // Clear overlay rect but keep overlay for next draw
-      currentRect = null;
-      drawStartRef.current = null;
-      overlay.innerHTML = '';
-    };
-
-    const onMouseLeave = () => {
-      if (isDrawing) {
-        isDrawing = false;
-        currentRect = null;
-        drawStartRef.current = null;
-        overlay.innerHTML = '';
-      }
-    };
-
-    overlay.addEventListener('mousedown', onMouseDown);
-    overlay.addEventListener('mousemove', onMouseMove);
-    overlay.addEventListener('mouseup', onMouseUp);
-    overlay.addEventListener('mouseleave', onMouseLeave);
-
-    return () => {
-      overlay.removeEventListener('mousedown', onMouseDown);
-      overlay.removeEventListener('mousemove', onMouseMove);
-      overlay.removeEventListener('mouseup', onMouseUp);
-      overlay.removeEventListener('mouseleave', onMouseLeave);
-      if (drawOverlayRef.current) {
-        drawOverlayRef.current.remove();
-        drawOverlayRef.current = null;
-      }
-      drawStartRef.current = null;
-    };
-  }, [batchMode, mapReady, onBatchRectChange, onBatchDrawComplete]);
+    setDrawing(false);
+    setDrawRect(null);
+  }, [drawing, drawRect, onBatchRectChange, onBatchDrawComplete]);
 
   // ── Disable map drag when batch mode is active ────────────────────
   useEffect(() => {
@@ -574,7 +501,6 @@ export default function VietmapMap({
     }
 
     return () => {
-      // Re-enable on cleanup
       if (map && !map.isRemoved?.()) {
         map.dragPan.enable();
         map.scrollZoom.enable();
@@ -583,6 +509,14 @@ export default function VietmapMap({
       }
     };
   }, [batchMode, mapReady]);
+
+  // Compute SVG rect from drawRect
+  const svgRect = drawRect ? {
+    x: Math.min(drawRect.startX, drawRect.endX),
+    y: Math.min(drawRect.startY, drawRect.endY),
+    w: Math.abs(drawRect.endX - drawRect.startX),
+    h: Math.abs(drawRect.endY - drawRect.startY),
+  } : null;
 
   return (
     <div style={{ position: 'relative', height, width: '100%' }}>
@@ -615,6 +549,46 @@ export default function VietmapMap({
         </div>
       )}
       <div ref={containerRef} style={{ height: '100%', width: '100%', borderRadius: '8px', overflow: 'hidden' }} />
+
+      {/* Phase L: Batch selection overlay - rendered in JSX */}
+      {batchMode && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 0, left: 0, right: 0, bottom: 0,
+            pointerEvents: 'all',
+            zIndex: 100,
+            cursor: 'crosshair',
+          }}
+          onMouseDown={handleBatchMouseDown}
+          onMouseMove={handleBatchMouseMove}
+          onMouseUp={handleBatchMouseUp}
+          onMouseLeave={() => {
+            if (drawing) {
+              setDrawing(false);
+              setDrawRect(null);
+            }
+          }}
+        >
+          {/* SVG layer for drawing rectangle */}
+          <svg
+            style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', overflow: 'visible' }}
+          >
+            {svgRect && svgRect.w > 0 && svgRect.h > 0 && (
+              <rect
+                x={svgRect.x}
+                y={svgRect.y}
+                width={svgRect.w}
+                height={svgRect.h}
+                fill="rgba(5, 150, 105, 0.15)"
+                stroke="#059669"
+                strokeWidth="3"
+                strokeDasharray="8,4"
+              />
+            )}
+          </svg>
+        </div>
+      )}
     </div>
   );
 }
