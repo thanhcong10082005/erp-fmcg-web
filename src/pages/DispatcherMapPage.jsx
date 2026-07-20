@@ -476,14 +476,14 @@ export default function DispatcherMapPage({ token, userRole }) {
     }, [points]);
 
     /** Khi hoàn thành vẽ → lấy danh sách partners trong vùng */
-    const handleBatchDrawComplete = useCallback((map) => {
-        if (!batchRect || !map) return;
-        const bounds = pixelToBounds(map, batchRect);
+    const handleBatchDrawComplete = useCallback((map, rect) => {
+        if (!rect || !map) return;
+        const bounds = pixelToBounds(map, rect);
         setBatchBounds(bounds);
         setBatchDrawing(false);
         const inBounds = getPointsInBounds(bounds);
         setBatchSelected(inBounds);
-    }, [batchRect, getPointsInBounds]);
+    }, [getPointsInBounds]);
 
     /** Toggle chọn/bỏ 1 partner khỏi batch */
     const toggleBatchPartner = (partnerId) => {
@@ -765,7 +765,7 @@ export default function DispatcherMapPage({ token, userRole }) {
                         batchRect={batchRect}
                         onBatchRectChange={setBatchRect}
                         onBatchDrawComplete={handleBatchDrawComplete}
-                        selectedIds={batchMode ? batchSelected.map(p => p.partner_id) : []}
+                        selectedIds={batchMode ? batchSelected.map(p => p.id) : []}
                         onMapReady={(map) => {
                             batchMapRef.current = map;
                             if (map && filteredPoints.length > 0) {

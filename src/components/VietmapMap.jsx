@@ -511,10 +511,10 @@ export default function VietmapMap({
       return;
     }
 
-    // Complete - notify parent
+    // Complete - notify parent with the final rect directly
     if (onBatchRectChange) onBatchRectChange(drawRect);
     if (onBatchDrawComplete && mapRef.current) {
-      onBatchDrawComplete(mapRef.current);
+      onBatchDrawComplete(mapRef.current, drawRect);
     }
 
     setDrawing(false);
