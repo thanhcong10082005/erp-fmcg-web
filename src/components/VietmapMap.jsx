@@ -260,12 +260,20 @@ export default function VietmapMap({
   // ── Render markers ───────────────────────────────────────────────
   const renderMarkers = useCallback(() => {
     const map = mapRef.current;
-    if (!map || map.isRemoved?.()) return;
+    if (!map || map.isRemoved?.()) {
+      console.log('[VietmapMap] renderMarkers skipped: map not ready', { mapReady: !!map, removed: map?.isRemoved?.() });
+      return;
+    }
 
     // Wait for map to be fully ready
-    if (!map.isStyleLoaded?.()) return;
+    if (!map.isStyleLoaded?.()) {
+      console.log('[VietmapMap] renderMarkers skipped: style not loaded');
+      return;
+    }
 
     const valid = points.filter(p => typeof p.lat === 'number' && typeof p.lng === 'number');
+    console.log('[VietmapMap] renderMarkers', { pointCount: valid.length, sample: valid[0] });
+
     const map_ = markersRef.current;
     const selectedSet = new Set(selectedIds);
 
