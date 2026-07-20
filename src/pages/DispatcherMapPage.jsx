@@ -765,6 +765,7 @@ export default function DispatcherMapPage({ token, userRole }) {
                         batchRect={batchRect}
                         onBatchRectChange={setBatchRect}
                         onBatchDrawComplete={handleBatchDrawComplete}
+                        selectedIds={batchMode ? batchSelected.map(p => p.partner_id) : []}
                         onMapReady={(map) => {
                             batchMapRef.current = map;
                             if (map && filteredPoints.length > 0) {

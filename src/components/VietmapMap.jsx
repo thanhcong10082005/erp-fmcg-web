@@ -64,7 +64,7 @@ function ensureVietmapGL() {
 }
 
 // ── Build marker DOM element ───────────────────────────────────────
-function buildMarkerEl(point) {
+function buildMarkerEl(point, options = {}) {
   const el = document.createElement('div');
   el.className = 'vietmap-marker-pin';
   el.style.cssText = 'cursor:pointer;';
@@ -73,24 +73,43 @@ function buildMarkerEl(point) {
   const stopOrder  = point.metadata?.stop_order;
   const weight     = point.metadata?.total_weight;
   const baseColor  = point.color || '#3B82F6';
+  const isSelected = options.isSelected; // batch selection
 
   let size = 34, label = '🏪', fontSize = 11, pulse = '';
 
-  if (isAssigned && stopOrder) {
+  if (isSelected) {
+    // Batch selected - green pulse ring
+    size = 40;
+    pulse = `<div style="position:absolute;top:-8px;left:-8px;right:-8px;bottom:-8px;border:3px solid #10B981;border-radius:50%;opacity:0.6;animation:vietmap-pulse 1.5s infinite;"></div>`;
+    el.innerHTML = `
+      <div style="width:${size}px;height:${size}px;background:#10B981;border:3px solid #fff;border-radius:50%;
+        display:flex;align-items:center;justify-content:center;font-size:${fontSize}px;font-weight:700;color:#fff;
+        box-shadow:0 0 0 4px rgba(16,185,129,0.3), 0 4px 12px rgba(0,0,0,0.4);font-family:system-ui,-apple-system,sans-serif;z-index:1;"
+        title="${point.label || ''}">${label}</div>${pulse}`;
+  } else if (isAssigned && stopOrder) {
     size = 42; label = String(stopOrder); fontSize = 15;
     pulse = `<div style="position:absolute;top:-6px;left:-6px;right:-6px;bottom:-6px;border:3px solid ${baseColor};border-radius:50%;opacity:0.3;animation:vietmap-pulse 2s infinite;"></div>`;
+    el.innerHTML = `
+      <div style="width:${size}px;height:${size}px;background:${baseColor};border:3px solid #fff;border-radius:50%;
+        display:flex;align-items:center;justify-content:center;font-size:${fontSize}px;font-weight:700;color:#fff;
+        box-shadow:0 4px 12px rgba(0,0,0,0.4);font-family:system-ui,-apple-system,sans-serif;z-index:1;"
+        title="${point.label || ''}${isAssigned && stopOrder ? ` — Stop #${stopOrder}` : ''}">${label}</div>${pulse}`;
   } else if (typeof weight === 'number' && weight > 0) {
     if (weight >= 500)      { size = 38; label = '📦'; fontSize = 13; }
     else if (weight >= 200) { size = 36; label = '📦'; fontSize = 12; }
     else if (weight >= 100) { size = 34; label = '🏪'; fontSize = 11; }
+    el.innerHTML = `
+      <div style="width:${size}px;height:${size}px;background:${baseColor};border:3px solid #fff;border-radius:50%;
+        display:flex;align-items:center;justify-content:center;font-size:${fontSize}px;font-weight:700;color:#fff;
+        box-shadow:0 4px 12px rgba(0,0,0,0.4);font-family:system-ui,-apple-system,sans-serif;z-index:1;"
+        title="${point.label || ''}">${label}</div>`;
+  } else {
+    el.innerHTML = `
+      <div style="width:${size}px;height:${size}px;background:${baseColor};border:3px solid #fff;border-radius:50%;
+        display:flex;align-items:center;justify-content:center;font-size:${fontSize}px;font-weight:700;color:#fff;
+        box-shadow:0 4px 12px rgba(0,0,0,0.4);font-family:system-ui,-apple-system,sans-serif;z-index:1;"
+        title="${point.label || ''}">${label}</div>`;
   }
-
-  const bgColor = baseColor;
-  el.innerHTML = `
-    <div style="width:${size}px;height:${size}px;background:${bgColor};border:3px solid #fff;border-radius:50%;
-      display:flex;align-items:center;justify-content:center;font-size:${fontSize}px;font-weight:700;color:#fff;
-      box-shadow:0 4px 12px rgba(0,0,0,0.4);font-family:system-ui,-apple-system,sans-serif;z-index:1;"
-      title="${point.label || ''}${isAssigned && stopOrder ? ` — Stop #${stopOrder}` : ''}">${label}</div>${pulse}`;
   return el;
 }
 
@@ -131,6 +150,7 @@ function buildPopupHTML(point, tripOptions, selectedTripId, assignLoading) {
 // ── Main component ────────────────────────────────────────────────
 export default function VietmapMap({
   points = [],
+  selectedIds = [], // array of point IDs that are batch-selected
   center = { lat: 10.762622, lng: 106.660172 },
   zoom = 11,
   height = '500px',
@@ -247,6 +267,7 @@ export default function VietmapMap({
 
     const valid = points.filter(p => typeof p.lat === 'number' && typeof p.lng === 'number');
     const map_ = markersRef.current;
+    const selectedSet = new Set(selectedIds);
 
     // Remove stale markers
     for (const [id, marker] of map_.entries()) {
@@ -259,6 +280,7 @@ export default function VietmapMap({
     // Add / update markers
     valid.forEach(p => {
       const existing = map_.get(p.id);
+      const isSelected = selectedSet.has(p.id);
 
       if (existing) {
         // Reposition if lat/lng changed
@@ -266,15 +288,31 @@ export default function VietmapMap({
         if (Math.abs(ll.lat - p.lat) > 1e-9 || Math.abs(ll.lng - p.lng) > 1e-9) {
           try { existing.setLngLat([p.lng, p.lat]); } catch (_) { /* ignore */ }
         }
+        // Rebuild element if selection state changed
+        if (isSelected !== existing._isSelected) {
+          try {
+            const el = buildMarkerEl(p, { isSelected });
+            existing.getElement().replaceWith(el);
+            existing._isSelected = isSelected;
+            // Re-attach click handler
+            if (onPointClick) {
+              el.addEventListener('click', (e) => {
+                e.stopPropagation();
+                try { onPointClick(p); } catch (_) { /* ignore */ }
+              });
+            }
+          } catch (_) { /* ignore */ }
+        }
         return;
       }
 
       try {
-        const el = buildMarkerEl(p);
+        const el = buildMarkerEl(p, { isSelected });
         const VM = window.vietmapgl;
         const marker = new VM.Marker({ element: el, draggable: !!draggable })
           .setLngLat([p.lng, p.lat]) // [lng, lat] order
           .addTo(map);
+        marker._isSelected = isSelected;
 
         if (onPointClick) {
           el.addEventListener('click', (e) => {
@@ -335,7 +373,7 @@ export default function VietmapMap({
     if (!mapReady) return;
     renderMarkers();
     updateRoute();
-  }, [mapReady, points, routeGeometry]);
+  }, [mapReady, points, selectedIds, routeGeometry]);
 
   // ── Fit bounds on first load + re-fit when boundsKey changes ──────
   useEffect(() => {
