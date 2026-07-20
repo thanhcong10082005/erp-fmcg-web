@@ -373,7 +373,7 @@ export default function VietmapMap({
     if (!mapReady) return;
     renderMarkers();
     updateRoute();
-  }, [mapReady, points, selectedIds, routeGeometry]);
+  }, [mapReady, points, selectedIds, routeGeometry, renderMarkers, updateRoute]);
 
   // ── Fit bounds on first load + re-fit when boundsKey changes ──────
   useEffect(() => {
