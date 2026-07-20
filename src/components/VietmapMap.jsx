@@ -67,7 +67,7 @@ function ensureVietmapGL() {
 function buildMarkerEl(point, options = {}) {
   const el = document.createElement('div');
   el.className = 'vietmap-marker-pin';
-  el.style.cssText = 'cursor:pointer;';
+  el.style.cssText = 'position:relative;cursor:pointer;';
 
   const isAssigned = !!(point.metadata?.trip_id);
   const stopOrder  = point.metadata?.stop_order;
@@ -78,13 +78,13 @@ function buildMarkerEl(point, options = {}) {
   let size = 34, label = '🏪', fontSize = 11, pulse = '';
 
   if (isSelected) {
-    // Batch selected - green pulse ring
-    size = 40;
-    pulse = `<div style="position:absolute;top:-8px;left:-8px;right:-8px;bottom:-8px;border:3px solid #10B981;border-radius:50%;opacity:0.6;animation:vietmap-pulse 1.5s infinite;"></div>`;
+    // Batch selected - green ring (compact, proportional to marker)
+    size = 38;
+    pulse = `<div style="position:absolute;top:-4px;left:-4px;right:-4px;bottom:-4px;border:2px solid #10B981;border-radius:50%;opacity:0.7;animation:vietmap-pulse 1.5s infinite;"></div>`;
     el.innerHTML = `
       <div style="width:${size}px;height:${size}px;background:#10B981;border:3px solid #fff;border-radius:50%;
         display:flex;align-items:center;justify-content:center;font-size:${fontSize}px;font-weight:700;color:#fff;
-        box-shadow:0 0 0 4px rgba(16,185,129,0.3), 0 4px 12px rgba(0,0,0,0.4);font-family:system-ui,-apple-system,sans-serif;z-index:1;"
+        box-shadow:0 0 0 3px rgba(16,185,129,0.25), 0 4px 12px rgba(0,0,0,0.4);font-family:system-ui,-apple-system,sans-serif;z-index:1;position:relative;"
         title="${point.label || ''}">${label}</div>${pulse}`;
   } else if (isAssigned && stopOrder) {
     size = 42; label = String(stopOrder); fontSize = 15;
@@ -92,7 +92,7 @@ function buildMarkerEl(point, options = {}) {
     el.innerHTML = `
       <div style="width:${size}px;height:${size}px;background:${baseColor};border:3px solid #fff;border-radius:50%;
         display:flex;align-items:center;justify-content:center;font-size:${fontSize}px;font-weight:700;color:#fff;
-        box-shadow:0 4px 12px rgba(0,0,0,0.4);font-family:system-ui,-apple-system,sans-serif;z-index:1;"
+        box-shadow:0 4px 12px rgba(0,0,0,0.4);font-family:system-ui,-apple-system,sans-serif;z-index:1;position:relative;"
         title="${point.label || ''}${isAssigned && stopOrder ? ` — Stop #${stopOrder}` : ''}">${label}</div>${pulse}`;
   } else if (typeof weight === 'number' && weight > 0) {
     if (weight >= 500)      { size = 38; label = '📦'; fontSize = 13; }
