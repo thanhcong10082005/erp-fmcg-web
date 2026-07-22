@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiCall, fmt, StatusBadge } from '../api/client';
 
-const ORDER_STATUSES = ['DRAFT', 'CONFIRMED', 'PENDING', 'DELIVERING', 'DELIVERED', 'INVOICED', 'CLOSED', 'CANCELLED'];
+const ORDER_STATUSES = ['DRAFT', 'CONFIRMED', 'PENDING', 'DELIVERING', 'DELIVERED', 'FAILED', 'INVOICED', 'CLOSED', 'CANCELLED'];
 
 const EMPTY_ITEM = () => ({ product_id: '', product_name: '', quantity: 1, unit_id: 1, unit_name: '', unit_price: 0, discount_pct: 0, tax_id: 2, tax_rate: 10, line_subtotal: 0, line_total: 0 });
 
@@ -237,7 +237,16 @@ export default function SalesOrdersPage({ token }) {
                                                 {fmt.vnd(Number(o.paid_amount) || 0)}
                                             </td>
                                             <td><StatusBadge s={(Number(o.paid_amount) || 0) >= (Number(o.total_amount) || 0) && (Number(o.total_amount) || 0) > 0 ? 'PAID' : ((Number(o.paid_amount) || 0) > 0 ? 'PARTIAL' : 'UNPAID')} /></td>
-                                            <td><StatusBadge s={o.status} /></td>
+                                            <td>
+                                                <StatusBadge s={o.status} />
+                                                {(o.failure_count > 0) && (
+                                                    <span style={{
+                                                        display: 'inline-block', marginLeft: 4, background: '#FEE2E2', color: '#991B1B',
+                                                        borderRadius: 8, padding: '1px 6px', fontSize: 10, fontWeight: 700,
+                                                        title: `Đơn rớt ${o.failure_count}/3 lần — ${o.failure_reason || ''}`
+                                                    }}>🚫 {o.failure_count}/3</span>
+                                                )}
+                                            </td>
                                             <td>
                                                 <button className="btn btn-sm btn-outline" onClick={() => viewDetail(o.so_id)}>👁️</button>
                                                 {o.status === 'DRAFT' && <button className="btn btn-sm btn-success" onClick={() => handleAction(o.so_id, 'confirm')}>✓ Duyệt</button>}

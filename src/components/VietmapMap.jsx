@@ -73,6 +73,7 @@ function buildMarkerEl(point) {
   const stopOrder  = point.metadata?.stop_order;
   const weight     = point.metadata?.total_weight;
   const baseColor  = point.color || '#3B82F6';
+  const failureCount = point.metadata?.failure_count || 0;
 
   let size = 34, label = '🏪', fontSize = 11, pulse = '';
 
@@ -85,12 +86,21 @@ function buildMarkerEl(point) {
     else if (weight >= 100) { size = 34; label = '🏪'; fontSize = 11; }
   }
 
+  // Badge failure_count
+  const badge = failureCount > 0
+    ? `<div style="position:absolute;top:-8px;right:-8px;background:#DC2626;color:#fff;border-radius:50%;width:18px;height:18px;
+        font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;border:2px solid #fff;z-index:2;"
+        title="Đơn rớt ${failureCount} lần">${failureCount}</div>`
+    : '';
+
   const bgColor = baseColor;
   el.innerHTML = `
-    <div style="width:${size}px;height:${size}px;background:${bgColor};border:3px solid #fff;border-radius:50%;
-      display:flex;align-items:center;justify-content:center;font-size:${fontSize}px;font-weight:700;color:#fff;
-      box-shadow:0 4px 12px rgba(0,0,0,0.4);font-family:system-ui,-apple-system,sans-serif;z-index:1;"
-      title="${point.label || ''}${isAssigned && stopOrder ? ` — Stop #${stopOrder}` : ''}">${label}</div>${pulse}`;
+    <div style="position:relative;display:inline-block;">
+      <div style="width:${size}px;height:${size}px;background:${bgColor};border:3px solid #fff;border-radius:50%;
+        display:flex;align-items:center;justify-content:center;font-size:${fontSize}px;font-weight:700;color:#fff;
+        box-shadow:0 4px 12px rgba(0,0,0,0.4);font-family:system-ui,-apple-system,sans-serif;z-index:1;"
+        title="${point.label || ''}${isAssigned && stopOrder ? ` — Stop #${stopOrder}` : ''}">${label}</div>${pulse}${badge}
+    </div>`;
   return el;
 }
 
@@ -103,6 +113,13 @@ function buildPopupHTML(point, tripOptions, selectedTripId, assignLoading) {
   const currentTrip = partner.trip_id
     ? `<span style="color:#2563EB">✓ Thuộc chuyến #${partner.trip_id}</span>`
     : '<span style="color:#6B7280">Chưa gán chuyến</span>';
+  const failureCount = partner.failure_count || 0;
+  const failureReason = partner.failure_reason || '';
+  const failureBadge = failureCount > 0
+    ? `<div style="margin-top:4px;padding:4px 6px;background:#FEE2E2;border-radius:4px;font-size:11px;color:#991B1B;font-weight:600;">
+        🚫 Đơn rớt <strong>${failureCount}/3</strong> lần${failureReason ? ` — ${failureReason}` : ''}
+       </div>`
+    : '';
   const tripOptsHTML = tripOptions
     .map(t => `<option value="${t.trip_id}" ${String(selectedTripId) === String(t.trip_id) ? 'selected' : ''}>${t.trip_number || t.trip_id}</option>`)
     .join('');
@@ -115,6 +132,7 @@ function buildPopupHTML(point, tripOptions, selectedTripId, assignLoading) {
         <div>📦 Khối lượng: <strong>${weight}</strong></div>
         ${stopNum ? `<div style="margin-top:2px;">🔢 ${stopNum}</div>` : ''}
         <div style="margin-top:4px;">${currentTrip}</div>
+        ${failureBadge}
       </div>
       <div style="margin-top:10px;padding-top:8px;border-top:1px solid #E5E7EB;">
         <label style="font-size:12px;font-weight:600;color:#374151;">Chuyến xe:</label>
