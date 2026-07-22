@@ -41,7 +41,7 @@ export default function ReturnsPage({ token }) {
     // Open detail
     const handleOpenDetail = async (ret) => {
         try {
-            const data = await apiCall('GET', `/logistics/returns/${ret.return_id}`, null, token);
+            const data = await apiCall('GET', `/logistics/returns/${ret.return_id || ret.customer_return_id}`, null, token);
             setSelectedReturn(data);
             setReturnItems(Array.isArray(data.items) ? data.items : []);
         } catch (e) { setErr(e.message); }
@@ -49,18 +49,19 @@ export default function ReturnsPage({ token }) {
 
     // Update received_qty
     const handleUpdateItem = async (item) => {
+        const returnId = selectedReturn.return_id || selectedReturn.customer_return_id;
         const qty = prompt(`[${item.product_name}] Nhập số lượng thực nhận tại kho:`, item.received_qty || item.returned_qty || 0);
         if (qty === null) return;
         const qtyNum = Number(qty);
         if (isNaN(qtyNum)) { alert('Số lượng không hợp lệ'); return; }
 
-        setSavingItem(item.return_item_id);
+        setSavingItem(item.return_item_id || item.cr_item_id);
         try {
-            await apiCall('PUT', `/logistics/returns/${selectedReturn.return_id}/items/${item.return_item_id}`, {
+            await apiCall('PUT', `/logistics/returns/${returnId}/items/${item.return_item_id || item.cr_item_id}`, {
                 received_qty: qtyNum,
                 notes: item.notes
             }, token);
-            const updated = await apiCall('GET', `/logistics/returns/${selectedReturn.return_id}`, null, token);
+            const updated = await apiCall('GET', `/logistics/returns/${returnId}`, null, token);
             setSelectedReturn(updated);
             setReturnItems(Array.isArray(updated.items) ? updated.items : []);
         } catch (e) { alert('Lỗi: ' + e.message); }
@@ -70,6 +71,7 @@ export default function ReturnsPage({ token }) {
     // Approve return
     const handleApprove = async () => {
         if (!selectedReturn) return;
+        const returnId = selectedReturn.return_id || selectedReturn.customer_return_id;
         const received = returnItems.filter(i => Number(i.received_qty) > 0);
         if (received.length === 0) {
             alert('Chưa nhận hàng nào. Vui lòng cập nhật số lượng thực nhận trước khi duyệt.');
@@ -81,8 +83,8 @@ export default function ReturnsPage({ token }) {
 
         setApproving(true);
         try {
-            await apiCall('POST', `/logistics/returns/${selectedReturn.return_id}/approve`, {}, token);
-            const updated = await apiCall('GET', `/logistics/returns/${selectedReturn.return_id}`, null, token);
+            await apiCall('POST', `/logistics/returns/${returnId}/approve`, {}, token);
+            const updated = await apiCall('GET', `/logistics/returns/${returnId}`, null, token);
             setSelectedReturn(updated);
             setReturnItems(Array.isArray(updated.items) ? updated.items : []);
             loadReturns();
@@ -94,16 +96,17 @@ export default function ReturnsPage({ token }) {
     // Cancel return
     const handleCancel = async () => {
         if (!selectedReturn || selectedReturn.status !== 'DRAFT') return;
+        const returnId = selectedReturn.return_id || selectedReturn.customer_return_id;
         if (!confirm('Hủy phiếu trả hàng này?')) return;
         try {
-            await apiCall('POST', `/logistics/returns/${selectedReturn.return_id}/cancel`, {}, token);
+            await apiCall('POST', `/logistics/returns/${returnId}/cancel`, {}, token);
             setSelectedReturn(null);
             loadReturns();
         } catch (e) { alert('Lỗi: ' + e.message); }
     };
 
     const statusBadge = (s) => {
-        if (s === 'APPROVED') return <span style={{ background: '#D1FAE5', color: '#065F46', padding: '2px 8px', borderRadius: 12, fontSize: 12 }}>Đã duyệt</span>;
+        if (s === 'APPROVED' || s === 'POSTED') return <span style={{ background: '#D1FAE5', color: '#065F46', padding: '2px 8px', borderRadius: 12, fontSize: 12 }}>Đã duyệt</span>;
         if (s === 'CANCELLED') return <span style={{ background: '#FEE2E2', color: '#991B1B', padding: '2px 8px', borderRadius: 12, fontSize: 12 }}>Đã hủy</span>;
         return <span style={{ background: '#FEF3C7', color: '#92400E', padding: '2px 8px', borderRadius: 12, fontSize: 12 }}>Nháp</span>;
     };
@@ -131,7 +134,7 @@ export default function ReturnsPage({ token }) {
                             onChange={e => setFilter(f => ({ ...f, status: e.target.value }))}>
                             <option value="">Tất cả</option>
                             <option value="DRAFT">Nháp</option>
-                            <option value="APPROVED">Đã duyệt</option>
+                            <option value="POSTED">Đã duyệt</option>
                             <option value="CANCELLED">Đã hủy</option>
                         </select>
                     </label>
@@ -182,11 +185,11 @@ export default function ReturnsPage({ token }) {
                                             background: selectedReturn?.return_id === r.return_id ? '#EFF6FF' : undefined,
                                             cursor: 'pointer'
                                         }} onClick={() => handleOpenDetail(r)}>
-                                            <td><strong>{r.return_number}</strong></td>
+                                            <td><strong>{r.return_number || r.cr_number}</strong></td>
                                             <td>{typeLabel(r.return_type)}</td>
                                             <td>{r.partner_name || '—'}</td>
                                             <td>{r.trip_number || '—'}</td>
-                                            <td>{r.total_items}</td>
+                                            <td>{r.total_items || returnItems?.length || '-'}</td>
                                             <td>{statusBadge(r.status)}</td>
                                             <td>{new Date(r.created_at).toLocaleDateString('vi-VN')}</td>
                                             <td>
@@ -204,7 +207,7 @@ export default function ReturnsPage({ token }) {
                 {selectedReturn && (
                     <div className="card" style={{ position: 'sticky', top: 16, maxHeight: 'calc(100vh - 100px)', overflowY: 'auto' }}>
                         <div className="card-header">
-                            <h3 style={{ margin: 0 }}>📋 {selectedReturn.return_number}</h3>
+                            <h3 style={{ margin: 0 }}>📋 {selectedReturn.return_number || selectedReturn.cr_number}</h3>
                         </div>
                         <div className="card-body">
                             {/* Summary */}
