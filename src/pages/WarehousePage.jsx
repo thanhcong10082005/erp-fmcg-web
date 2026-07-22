@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiCall, fmt, StatusBadge } from '../api/client';
+import StockCountPage from './StockCountPage';
 
 export default function WarehousePage({ token }) {
+    const [activeTab, setActiveTab] = useState('inventory'); // 'inventory' | 'stock-count'
     const [warehouses, setWarehouses] = useState([]);
     const [inventory, setInventory] = useState([]);
     const [selectedWh, setSelectedWh] = useState('');
@@ -100,6 +102,34 @@ export default function WarehousePage({ token }) {
 
     return (
         <div>
+            {/* Tab navigation */}
+            <div style={{ display: 'flex', gap: 4, marginBottom: 16, borderBottom: '2px solid #E5E7EB' }}>
+                <button
+                    onClick={() => setActiveTab('inventory')}
+                    style={{
+                        padding: '10px 20px', border: 'none', cursor: 'pointer', fontWeight: 600,
+                        background: activeTab === 'inventory' ? '#3B82F6' : 'transparent',
+                        color: activeTab === 'inventory' ? '#fff' : '#6B7280',
+                        borderRadius: '6px 6px 0 0', marginBottom: -2,
+                    }}
+                >
+                    📦 Tồn kho
+                </button>
+                <button
+                    onClick={() => setActiveTab('stock-count')}
+                    style={{
+                        padding: '10px 20px', border: 'none', cursor: 'pointer', fontWeight: 600,
+                        background: activeTab === 'stock-count' ? '#3B82F6' : 'transparent',
+                        color: activeTab === 'stock-count' ? '#fff' : '#6B7280',
+                        borderRadius: '6px 6px 0 0', marginBottom: -2,
+                    }}
+                >
+                    📋 Kiểm kê kho
+                </button>
+            </div>
+
+            {activeTab === 'inventory' && (
+            <div>
             <div className="card">
                 <div className="card-header"><h3>🏭 Kho hàng</h3></div>
                 <div className="card-body">
@@ -231,6 +261,12 @@ export default function WarehousePage({ token }) {
                         </form>
                     </div>
                 </div>
+            )}
+            </div>
+            )}
+
+            {activeTab === 'stock-count' && (
+                <StockCountPage token={token} />
             )}
         </div>
     );

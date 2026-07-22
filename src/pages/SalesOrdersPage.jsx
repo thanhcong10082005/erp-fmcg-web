@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiCall, fmt, StatusBadge } from '../api/client';
+import ReturnsPage from './ReturnsPage';
 
 const ORDER_STATUSES = ['DRAFT', 'CONFIRMED', 'PENDING', 'DELIVERING', 'DELIVERED', 'FAILED', 'INVOICED', 'CLOSED', 'CANCELLED'];
 
@@ -13,6 +14,7 @@ export default function SalesOrdersPage({ token }) {
     const [selected, setSelected] = useState(null);
     const [showForm, setShowForm] = useState(false);
     const [saving, setSaving] = useState(false);
+    const [activeTab, setActiveTab] = useState('orders'); // 'orders' | 'returns'
 
     // Create-order form state
     const [partners, setPartners] = useState([]);
@@ -40,10 +42,11 @@ export default function SalesOrdersPage({ token }) {
     }, [showForm]);
     const [form, setForm] = useState({
         partner_id: '', warehouse_id: 1,
-        expected_date: '', notes: '',
+        expected_date: '', notes: '', promo_code: '',
         items: [EMPTY_ITEM()],
     });
     const [formErr, setFormErr] = useState('');
+    const [promoPreview, setPromoPreview] = useState(null);
 
     const load = useCallback(async () => {
         setLoading(true); setErr('');
@@ -84,8 +87,9 @@ export default function SalesOrdersPage({ token }) {
     }, [token]);
 
     const openCreate = async () => {
-        setForm({ partner_id: '', warehouse_id: 1, expected_date: '', notes: '', items: [EMPTY_ITEM()] });
+        setForm({ partner_id: '', warehouse_id: 1, expected_date: '', notes: '', promo_code: '', items: [EMPTY_ITEM()] });
         setFormErr('');
+        setPromoPreview(null);
         setPartnerSearch(''); setProductSearch('');
         setProductSearchIdx({});
         setOpenProductDropdown(null);
@@ -159,6 +163,18 @@ export default function SalesOrdersPage({ token }) {
         return { subtotal, discount, tax, total };
     };
 
+    // Preview promotion when promo_code changes
+    const previewPromotion = useCallback(async () => {
+        if (!form.promo_code) { setPromoPreview(null); return; }
+        const { subtotal } = orderTotals();
+        if (subtotal <= 0) return;
+        try {
+            const data = await apiCall('GET',
+                `/sales/promotions?code=${encodeURIComponent(form.promo_code)}&subtotal=${subtotal}`, null, token);
+            setPromoPreview(data.preview);
+        } catch (e) { setPromoPreview(null); }
+    }, [form.promo_code, token, orderTotals]);
+
     const handleSubmitOrder = async (e) => {
         e.preventDefault();
         setFormErr('');
@@ -173,6 +189,7 @@ export default function SalesOrdersPage({ token }) {
                 warehouse_id: parseInt(form.warehouse_id) || 1,
                 expected_date: form.expected_date || null,
                 notes: form.notes || null,
+                promo_code: form.promo_code || null,
                 items: form.items
                     .filter(it => it.product_id && it.quantity > 0)
                     .map(it => {
@@ -196,9 +213,39 @@ export default function SalesOrdersPage({ token }) {
     };
 
     const t = orderTotals();
+    const promoDiscount = promoPreview?.applied ? promoPreview.discountAmount : 0;
+    const finalTotal = t.total - promoDiscount;
 
     return (
         <div>
+            {/* Tab navigation */}
+            <div style={{ display: 'flex', gap: 4, marginBottom: 16, borderBottom: '2px solid #E5E7EB' }}>
+                <button
+                    onClick={() => setActiveTab('orders')}
+                    style={{
+                        padding: '10px 20px', border: 'none', cursor: 'pointer', fontWeight: 600,
+                        background: activeTab === 'orders' ? '#10B981' : 'transparent',
+                        color: activeTab === 'orders' ? '#fff' : '#6B7280',
+                        borderRadius: '6px 6px 0 0', marginBottom: -2,
+                    }}
+                >
+                    🛒 Đơn hàng
+                </button>
+                <button
+                    onClick={() => setActiveTab('returns')}
+                    style={{
+                        padding: '10px 20px', border: 'none', cursor: 'pointer', fontWeight: 600,
+                        background: activeTab === 'returns' ? '#F59E0B' : 'transparent',
+                        color: activeTab === 'returns' ? '#fff' : '#6B7280',
+                        borderRadius: '6px 6px 0 0', marginBottom: -2,
+                    }}
+                >
+                    ↩️ Hàng rớt / trả
+                </button>
+            </div>
+
+            {activeTab === 'orders' && (
+            <div>
             <div className="card">
                 <div className="card-header">
                     <h3>🛒 Đơn bán hàng ({orders.length})</h3>
@@ -594,12 +641,37 @@ export default function SalesOrdersPage({ token }) {
                                 </table>
                             </div>
 
-                            {/* Ghi chú (bên dưới products table để không che dropdown) */}
-                            <div className="form-group order-form-body" style={{ marginBottom: 20 }}>
-                                <label>Ghi chú</label>
-                                <input value={form.notes}
-                                    onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
-                                    placeholder="Ghi chú cho đơn hàng..." />
+                            {/* Ghi chú & Mã KM */}
+                            <div className="grid-2" style={{ marginBottom: 20 }}>
+                                <div className="form-group order-form-body">
+                                    <label>Ghi chú</label>
+                                    <input value={form.notes}
+                                        onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
+                                        placeholder="Ghi chú cho đơn hàng..." />
+                                </div>
+                                <div className="form-group order-form-body">
+                                    <label>Mã khuyến mãi</label>
+                                    <div style={{ display: 'flex', gap: 8 }}>
+                                        <input value={form.promo_code}
+                                            onChange={e => { setForm(f => ({ ...f, promo_code: e.target.value })); setPromoPreview(null); }}
+                                            placeholder="Ví dụ: KM10, KM50K..."
+                                            style={{ flex: 1 }} />
+                                        <button type="button" className="btn btn-outline btn-sm"
+                                            onClick={previewPromotion}>🔍</button>
+                                    </div>
+                                    {promoPreview && (
+                                        <div style={{
+                                            marginTop: 4, padding: '4px 8px', borderRadius: 4, fontSize: 12,
+                                            background: promoPreview.applied ? '#DCFCE7' : '#FEF3C7',
+                                            color: promoPreview.applied ? '#166534' : '#92400E',
+                                        }}>
+                                            {promoPreview.message}
+                                            {promoPreview.applied && promoPreview.discountAmount > 0 && (
+                                                <span style={{ fontWeight: 700 }}> (-{promoPreview.discountAmount.toLocaleString('vi-VN')}đ)</span>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
                             </div>
 
                             {/* Totals (bên dưới products table) */}
@@ -611,16 +683,26 @@ export default function SalesOrdersPage({ token }) {
                                             <td style={{ padding: '8px 16px', textAlign: 'right', fontWeight: 600 }}>{fmt.vnd(t.subtotal)}</td>
                                         </tr>
                                         <tr style={{ background: '#F9FAFB' }}>
-                                            <td style={{ padding: '8px 16px', textAlign: 'right', color: '#10B981' }}>Chiết khấu:</td>
+                                            <td style={{ padding: '8px 16px', textAlign: 'right', color: '#10B981' }}>Chiết khấu dòng:</td>
                                             <td style={{ padding: '8px 16px', textAlign: 'right', color: '#10B981', fontWeight: 600 }}>-{fmt.vnd(t.discount)}</td>
                                         </tr>
+                                        {promoDiscount > 0 && (
+                                            <tr style={{ background: '#DCFCE7' }}>
+                                                <td style={{ padding: '8px 16px', textAlign: 'right', color: '#166534' }}>
+                                                    Khuyến mãi ({promoPreview.promotion?.label}):
+                                                </td>
+                                                <td style={{ padding: '8px 16px', textAlign: 'right', color: '#166534', fontWeight: 700 }}>
+                                                    -{fmt.vnd(promoDiscount)}
+                                                </td>
+                                            </tr>
+                                        )}
                                         <tr style={{ background: '#F9FAFB' }}>
                                             <td style={{ padding: '8px 16px', textAlign: 'right', color: '#6B7280' }}>Thuế:</td>
                                             <td style={{ padding: '8px 16px', textAlign: 'right', fontWeight: 600 }}>{fmt.vnd(t.tax)}</td>
                                         </tr>
                                         <tr style={{ background: '#10B981', color: '#fff' }}>
                                             <td style={{ padding: '10px 16px', textAlign: 'right', fontWeight: 800 }}>TỔNG CỘNG:</td>
-                                            <td style={{ padding: '10px 16px', textAlign: 'right', fontWeight: 800, fontSize: '1.1rem' }}>{fmt.vnd(t.total)}</td>
+                                            <td style={{ padding: '10px 16px', textAlign: 'right', fontWeight: 800, fontSize: '1.1rem' }}>{fmt.vnd(finalTotal)}</td>
                                         </tr>
                                     </tbody>
                                 </table>
@@ -635,6 +717,12 @@ export default function SalesOrdersPage({ token }) {
                         </form>
                     </div>
                 </div>
+            )}
+            </div>
+            )}
+
+            {activeTab === 'returns' && (
+                <ReturnsPage token={token} />
             )}
         </div>
     );

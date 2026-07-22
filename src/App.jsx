@@ -7,8 +7,6 @@ import PartnersPage from './pages/PartnersPage';
 import ProductsPage from './pages/ProductsPage';
 import SalesOrdersPage from './pages/SalesOrdersPage';
 import WarehousePage from './pages/WarehousePage';
-import StockCountPage from './pages/StockCountPage';
-import ReturnsPage from './pages/ReturnsPage';
 import InvoicesPage from './pages/InvoicesPage';
 import ReportsPage from './pages/ReportsPage';
 import RbacAdminPage from './pages/RbacAdminPage';
@@ -71,8 +69,6 @@ const NAV_ITEMS = [
     { id: 'logistics', label: 'Giao hàng', icon: '🚚' },
     { id: 'dispatcher-map', label: 'Bản đồ điều phối', icon: '🗺️' },
     { id: 'warehouse', label: 'Kho & Tồn kho', icon: '🏭' },
-    { id: 'stock-count', label: 'Kiểm kê kho', icon: '📋' },
-    { id: 'returns', label: 'Hàng rớt/trả', icon: '↩️' },
     { id: 'invoices', label: 'Hóa đơn', icon: '🧾' },
     { id: 'reports', label: 'Báo cáo', icon: '📈' },
     { id: 'rbac', label: 'RBAC Admin', icon: '🛡️' },
@@ -252,8 +248,6 @@ function ErpAppShell() {
                     {section === 'products' && <ProductsPage token={jwtToken}/>}
                     {section === 'sales' && <SalesOrdersPage token={jwtToken}/>}
                     {section === 'warehouse' && <WarehousePage token={jwtToken}/>}
-                    {section === 'stock-count' && <StockCountPage token={jwtToken}/>}
-                    {section === 'returns' && <ReturnsPage token={jwtToken}/>}
                     {section === 'invoices' && <InvoicesPage token={jwtToken}/>}
                     {section === 'logistics' && <LogisticsPage token={jwtToken}/>}
                     {section === 'dispatcher-map' && <DispatcherMapPage token={jwtToken} userRole={userRole}/>}

@@ -22,6 +22,10 @@ export default function PartnersPage({ token }) {
     const [editing, setEditing] = useState(null);
     const [activeTab, setActiveTab] = useState('list');
 
+    // v13.2 - Partner health scores
+    const [healthScores, setHealthScores] = useState([]);
+    const [loadingHealth, setLoadingHealth] = useState(false);
+
     const [form, setForm] = useState({
         partner_code: '', partner_name: '', partner_type: 'STORE',
         phone: '', email: '', tax_code: '', credit_limit: 0,
@@ -61,6 +65,16 @@ export default function PartnersPage({ token }) {
     }, [token, search, type, routeCode, page]);
 
     useEffect(() => { if (token) load(1); }, [token, search, type, routeCode]);
+
+    // v13.2 - Load partner health scores
+    const loadPartnerHealth = useCallback(async () => {
+        setLoadingHealth(true);
+        try {
+            const data = await apiCall('GET', '/partners/health-scores', null, token);
+            setHealthScores(Array.isArray(data) ? data : []);
+        } catch (e) { setErr(e.message); }
+        finally { setLoadingHealth(false); }
+    }, [token]);
 
     const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
     const startIdx = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
@@ -175,6 +189,12 @@ export default function PartnersPage({ token }) {
                     onClick={() => { resetForm(); setEditing(null); setShowForm(true); setActiveTab('form'); }}
                 >
                     ➕ Thêm Partner
+                </button>
+                <button
+                    className={`btn ${activeTab === 'health' ? 'btn-primary' : 'btn-outline'} btn-sm`}
+                    onClick={() => { setActiveTab('health'); loadPartnerHealth(); }}
+                >
+                    💚 Sức khỏe KH
                 </button>
             </div>
 
@@ -310,6 +330,136 @@ export default function PartnersPage({ token }) {
             {/* Map View */}
             {activeTab === 'map' && (
                 <CustomerMapView token={token} onClose={() => setActiveTab('list')} />
+            )}
+
+            {/* v13.2 - Partner Health Scores View */}
+            {activeTab === 'health' && (
+                <div className="card">
+                    <div className="card-header">
+                        <h3>💚 Sức khỏe Khách hàng</h3>
+                        <button className="btn btn-outline btn-sm" onClick={loadPartnerHealth} disabled={loadingHealth}>
+                            {loadingHealth ? '⏳...' : '🔄 Làm mới'}
+                        </button>
+                    </div>
+                    <div className="card-body">
+                        {err && <div className="alert alert-error">{err}</div>}
+                        {loadingHealth ? (
+                            <div>Đang tải...</div>
+                        ) : (
+                            <>
+                                {/* Summary stats */}
+                                <div className="grid-4 mb-16">
+                                    <div style={{ background: '#D1FAE5', padding: 12, borderRadius: 8, textAlign: 'center' }}>
+                                        <div className="text-sm text-muted">Hoạt động tốt</div>
+                                        <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#065F46' }}>
+                                            {healthScores.filter(p => p.health_status === 'ACTIVE').length}
+                                        </div>
+                                    </div>
+                                    <div style={{ background: '#FEF3C7', padding: 12, borderRadius: 8, textAlign: 'center' }}>
+                                        <div className="text-sm text-muted">Cần theo dõi</div>
+                                        <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#92400E' }}>
+                                            {healthScores.filter(p => p.health_status === 'AT_RISK').length}
+                                        </div>
+                                    </div>
+                                    <div style={{ background: '#FEE2E2', padding: 12, borderRadius: 8, textAlign: 'center' }}>
+                                        <div className="text-sm text-muted">Ngủ đông</div>
+                                        <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#991B1B' }}>
+                                            {healthScores.filter(p => p.health_status === 'DORMANT').length}
+                                        </div>
+                                    </div>
+                                    <div style={{ background: '#6B7280', padding: 12, borderRadius: 8, textAlign: 'center' }}>
+                                        <div className="text-sm text-muted">Không hoạt động</div>
+                                        <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#fff' }}>
+                                            {healthScores.filter(p => p.health_status === 'INACTIVE').length}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Health table */}
+                                <div className="table-wrap">
+                                    <table>
+                                        <thead>
+                                            <tr>
+                                                <th>KH</th>
+                                                <th>Loại</th>
+                                                <th>Ngày đặt cuối</th>
+                                                <th>Ngày không order</th>
+                                                <th>Đơn 30d</th>
+                                                <th>Doanh thu 30d</th>
+                                                <th>Điểm</th>
+                                                <th>Trạng thái</th>
+                                                <th>Cảnh báo</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {healthScores.map(p => {
+                                                const statusColors = {
+                                                    'ACTIVE': { bg: '#D1FAE5', color: '#065F46' },
+                                                    'AT_RISK': { bg: '#FEF3C7', color: '#92400E' },
+                                                    'DORMANT': { bg: '#FEE2E2', color: '#991B1B' },
+                                                    'INACTIVE': { bg: '#6B7280', color: '#fff' },
+                                                };
+                                                const statusLabels = {
+                                                    'ACTIVE': '✅ Hoạt động',
+                                                    'AT_RISK': '🟡 Cần theo dõi',
+                                                    'DORMANT': '🔴 Ngủ đông',
+                                                    'INACTIVE': '⚫ Không hoạt động',
+                                                };
+                                                const sc = statusColors[p.health_status] || statusColors['INACTIVE'];
+                                                return (
+                                                    <tr key={p.partner_id} style={{ background: p.health_status !== 'ACTIVE' ? sc.bg + '40' : undefined }}>
+                                                        <td>
+                                                            <strong>{p.partner_name}</strong>
+                                                            <div style={{ fontSize: '0.75rem', color: '#6B7280' }}>{p.partner_code}</div>
+                                                        </td>
+                                                        <td>
+                                                            <span style={{
+                                                                background: getTypeBadgeColor(p.partner_type) + '20',
+                                                                color: getTypeBadgeColor(p.partner_type),
+                                                                padding: '2px 6px', borderRadius: 4, fontSize: '0.7rem'
+                                                            }}>
+                                                                {p.partner_type}
+                                                            </span>
+                                                        </td>
+                                                        <td>{p.last_order_date || '—'}</td>
+                                                        <td style={{ color: p.days_since_last_order > 30 ? '#DC2626' : p.days_since_last_order > 15 ? '#F59E0B' : '#10B981', fontWeight: 700 }}>
+                                                            {p.days_since_last_order > 0 ? `${p.days_since_last_order} ngày` : 'Hôm nay'}
+                                                        </td>
+                                                        <td style={{ fontWeight: 600 }}>{p.orders_last_30d}</td>
+                                                        <td style={{ color: '#10B981', fontWeight: 600 }}>{fmt.vnd(p.revenue_last_30d)}</td>
+                                                        <td>
+                                                            <div style={{
+                                                                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                                                                width: 36, height: 36, borderRadius: '50%',
+                                                                background: p.health_score >= 80 ? '#10B981' : p.health_score >= 50 ? '#F59E0B' : '#DC2626',
+                                                                color: '#fff', fontWeight: 700, fontSize: '0.85rem'
+                                                            }}>
+                                                                {p.health_score}
+                                                            </div>
+                                                        </td>
+                                                        <td>
+                                                            <span style={{ background: sc.bg, color: sc.color, padding: '2px 8px', borderRadius: 12, fontSize: 12 }}>
+                                                                {statusLabels[p.health_status]}
+                                                            </span>
+                                                        </td>
+                                                        <td>
+                                                            {p.alerts?.map((alert, i) => (
+                                                                <div key={i} style={{ fontSize: '0.75rem', color: '#DC2626', whiteSpace: 'nowrap' }}>{alert}</div>
+                                                            ))}
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                            {healthScores.length === 0 && (
+                                                <tr><td colSpan={9} style={{ textAlign: 'center', padding: 20 }}>Chưa có dữ liệu</td></tr>
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </div>
             )}
 
             {/* Form View */}
