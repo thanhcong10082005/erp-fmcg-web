@@ -24,7 +24,14 @@ export default function PartnersPage({ token }) {
 
     // v13.2 - Partner health scores
     const [healthScores, setHealthScores] = useState([]);
-    const [loadingHealth, setLoadingHealth] = useState(false);
+    const [healthTotal, setHealthTotal] = useState(0);
+    const [healthPage, setHealthPage] = useState(1);
+    const [healthStatus, setHealthStatus] = useState('');
+    const [healthLoading, setHealthLoading] = useState(false);
+    const [healthSummary, setHealthSummary] = useState({ active: 0, atRisk: 0, dormant: 0, inactive: 0 });
+    const HEALTH_PAGE_SIZE = 50;
+
+    const healthTotalPages = Math.max(1, Math.ceil(healthTotal / HEALTH_PAGE_SIZE));
 
     const [form, setForm] = useState({
         partner_code: '', partner_name: '', partner_type: 'STORE',
@@ -66,14 +73,47 @@ export default function PartnersPage({ token }) {
 
     useEffect(() => { if (token) load(1); }, [token, search, type, routeCode]);
 
-    // v13.2 - Load partner health scores
-    const loadPartnerHealth = useCallback(async () => {
-        setLoadingHealth(true);
+    // v13.2 - Load partner health scores with pagination + search
+    const loadPartnerHealth = useCallback(async (pageOverride, statusOverride) => {
+        setHealthLoading(true);
         try {
-            const data = await apiCall('GET', '/partners/health-scores', null, token);
-            setHealthScores(Array.isArray(data) ? data : []);
+            const targetPage = pageOverride ?? healthPage;
+            const targetStatus = statusOverride ?? healthStatus;
+            const offset = (targetPage - 1) * HEALTH_PAGE_SIZE;
+            const qs = new URLSearchParams();
+            qs.set('limit', String(HEALTH_PAGE_SIZE));
+            qs.set('offset', String(offset));
+            if (targetStatus) qs.set('status', targetStatus);
+            if (search) qs.set('search', search);
+            const data = await apiCall('GET', '/partners/health-scores?' + qs.toString(), null, token);
+            if (data && Array.isArray(data.data)) {
+                setHealthScores(data.data);
+                setHealthTotal(typeof data.total === 'number' ? data.total : data.data.length);
+            } else if (Array.isArray(data)) {
+                setHealthScores(data);
+                setHealthTotal(data.length);
+            } else {
+                setHealthScores([]);
+                setHealthTotal(0);
+            }
+            if (pageOverride !== undefined) setHealthPage(targetPage);
         } catch (e) { setErr(e.message); }
-        finally { setLoadingHealth(false); }
+        finally { setHealthLoading(false); }
+    }, [token, search, healthPage, healthStatus]);
+
+    // Load summary stats (gọi 1 lần khi vào tab)
+    const loadHealthSummary = useCallback(async () => {
+        try {
+            const data = await apiCall('GET', '/partners/health-scores/summary', null, token);
+            if (data && typeof data.active === 'number') {
+                setHealthSummary({
+                    active: data.active,
+                    atRisk: data.atRisk,
+                    dormant: data.dormant,
+                    inactive: data.inactive,
+                });
+            }
+        } catch (e) { /* silent */ }
     }, [token]);
 
     const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -192,7 +232,7 @@ export default function PartnersPage({ token }) {
                 </button>
                 <button
                     className={`btn ${activeTab === 'health' ? 'btn-primary' : 'btn-outline'} btn-sm`}
-                    onClick={() => { setActiveTab('health'); loadPartnerHealth(); }}
+                    onClick={() => { setActiveTab('health'); setHealthPage(1); loadHealthSummary(); loadPartnerHealth(1, healthStatus); }}
                 >
                     💚 Sức khỏe KH
                 </button>
@@ -329,50 +369,64 @@ export default function PartnersPage({ token }) {
 
             {/* Map View */}
             {activeTab === 'map' && (
-                <CustomerMapView token={token} onClose={() => setActiveTab('list')} />
+                <CustomerMapView token={token} onClose={() => setActiveTab('list')} search={search} />
             )}
 
             {/* v13.2 - Partner Health Scores View */}
             {activeTab === 'health' && (
                 <div className="card">
-                    <div className="card-header">
+                    <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
                         <h3>💚 Sức khỏe Khách hàng</h3>
-                        <button className="btn btn-outline btn-sm" onClick={loadPartnerHealth} disabled={loadingHealth}>
-                            {loadingHealth ? '⏳...' : '🔄 Làm mới'}
-                        </button>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                            <span style={{ fontSize: '0.75rem', color: '#6B7280' }}>Lọc:</span>
+                            <select value={healthStatus} onChange={e => { setHealthStatus(e.target.value); setHealthPage(1); loadPartnerHealth(1, e.target.value); }}
+                                style={{ padding: '4px 8px', fontSize: '0.8rem', borderRadius: 6 }}>
+                                <option value="">Tất cả</option>
+                                <option value="ACTIVE">✅ Hoạt động</option>
+                                <option value="AT_RISK">🟡 Cần theo dõi</option>
+                                <option value="DORMANT">🔴 Ngủ đông</option>
+                                <option value="INACTIVE">⚪ Không hoạt động</option>
+                                <option value="NEVER_ORDERED">🔵 Chưa từng đặt</option>
+                            </select>
+                            <button className="btn btn-outline btn-sm" onClick={() => { loadHealthSummary(); loadPartnerHealth(1, healthStatus); }} disabled={healthLoading}>
+                                {healthLoading ? '⏳...' : '🔄 Làm mới'}
+                            </button>
+                        </div>
                     </div>
                     <div className="card-body">
                         {err && <div className="alert alert-error">{err}</div>}
-                        {loadingHealth ? (
+                        {healthLoading && healthScores.length === 0 ? (
                             <div>Đang tải...</div>
                         ) : (
                             <>
                                 {/* Summary stats */}
                                 <div className="grid-4 mb-16">
-                                    <div style={{ background: '#D1FAE5', padding: 12, borderRadius: 8, textAlign: 'center' }}>
+                                    <div style={{ background: '#D1FAE5', padding: 12, borderRadius: 8, textAlign: 'center', cursor: 'pointer' }}
+                                        onClick={() => { setHealthStatus('ACTIVE'); setHealthPage(1); loadPartnerHealth(1, 'ACTIVE'); }}>
                                         <div className="text-sm text-muted">Hoạt động tốt</div>
-                                        <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#065F46' }}>
-                                            {healthScores.filter(p => p.health_status === 'ACTIVE').length}
-                                        </div>
+                                        <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#065F46' }}>{healthSummary.active}</div>
                                     </div>
-                                    <div style={{ background: '#FEF3C7', padding: 12, borderRadius: 8, textAlign: 'center' }}>
+                                    <div style={{ background: '#FEF3C7', padding: 12, borderRadius: 8, textAlign: 'center', cursor: 'pointer' }}
+                                        onClick={() => { setHealthStatus('AT_RISK'); setHealthPage(1); loadPartnerHealth(1, 'AT_RISK'); }}>
                                         <div className="text-sm text-muted">Cần theo dõi</div>
-                                        <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#92400E' }}>
-                                            {healthScores.filter(p => p.health_status === 'AT_RISK').length}
-                                        </div>
+                                        <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#92400E' }}>{healthSummary.atRisk}</div>
                                     </div>
-                                    <div style={{ background: '#FEE2E2', padding: 12, borderRadius: 8, textAlign: 'center' }}>
+                                    <div style={{ background: '#FEE2E2', padding: 12, borderRadius: 8, textAlign: 'center', cursor: 'pointer' }}
+                                        onClick={() => { setHealthStatus('DORMANT'); setHealthPage(1); loadPartnerHealth(1, 'DORMANT'); }}>
                                         <div className="text-sm text-muted">Ngủ đông</div>
-                                        <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#991B1B' }}>
-                                            {healthScores.filter(p => p.health_status === 'DORMANT').length}
-                                        </div>
+                                        <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#991B1B' }}>{healthSummary.dormant}</div>
                                     </div>
-                                    <div style={{ background: '#F3F4F6', padding: 12, borderRadius: 8, textAlign: 'center' }}>
+                                    <div style={{ background: '#F3F4F6', padding: 12, borderRadius: 8, textAlign: 'center', cursor: 'pointer' }}
+                                        onClick={() => { setHealthStatus(''); setHealthPage(1); loadPartnerHealth(1, ''); }}>
                                         <div className="text-sm text-muted">Không hoạt động / Chưa order</div>
-                                        <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#6B7280' }}>
-                                            {healthScores.filter(p => ['INACTIVE', 'NEVER_ORDERED'].includes(p.health_status)).length}
-                                        </div>
+                                        <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#6B7280' }}>{healthSummary.inactive}</div>
                                     </div>
+                                </div>
+
+                                {/* Result count */}
+                                <div style={{ fontSize: '0.8rem', color: '#6B7280', marginBottom: 8 }}>
+                                    Hiển thị {healthScores.length} / {healthTotal} khách hàng
+                                    {healthStatus && ` (đang lọc: ${healthStatus})`}
                                 </div>
 
                                 {/* Health table */}
@@ -408,17 +462,16 @@ export default function PartnersPage({ token }) {
                                                     'NEVER_ORDERED': '🔵 Chưa từng đặt',
                                                 };
                                                 const sc = statusColors[p.health_status] || statusColors['INACTIVE'];
-                                                const daysSinceOrder = p.days_since_last_order; // null nếu chưa có đơn
+                                                const daysSinceOrder = p.days_since_last_order;
                                                 const daysColor = daysSinceOrder === null
-                                                    ? '#3B82F6'   // Xanh dương (chưa có dữ liệu)
+                                                    ? '#3B82F6'
                                                     : daysSinceOrder > 30 ? '#DC2626'
                                                     : daysSinceOrder > 15 ? '#F59E0B'
                                                     : '#10B981';
                                                 const daysText = daysSinceOrder === null
                                                     ? 'Chưa có đơn'
-                                                    : daysSinceOrder === 0
-                                                        ? 'Hôm nay'
-                                                        : `${daysSinceOrder} ngày`;
+                                                    : daysSinceOrder === 0 ? 'Hôm nay'
+                                                    : `${daysSinceOrder} ngày`;
                                                 return (
                                                     <tr key={p.partner_id}
                                                         style={{ background: p.health_status === 'NEVER_ORDERED' ? '#EFF6FF60' : undefined }}>
@@ -436,9 +489,7 @@ export default function PartnersPage({ token }) {
                                                             </span>
                                                         </td>
                                                         <td>{p.last_order_date ? new Date(p.last_order_date).toLocaleDateString('vi-VN') : '—'}</td>
-                                                        <td style={{ color: daysColor, fontWeight: 700 }}>
-                                                            {daysText}
-                                                        </td>
+                                                        <td style={{ color: daysColor, fontWeight: 700 }}>{daysText}</td>
                                                         <td style={{ fontWeight: 600 }}>{p.orders_last_30d}</td>
                                                         <td style={{ color: '#10B981', fontWeight: 600 }}>{fmt.vnd(p.revenue_last_30d)}</td>
                                                         <td>
@@ -456,8 +507,7 @@ export default function PartnersPage({ token }) {
                                                                 background: sc.bg, color: sc.color,
                                                                 padding: '3px 10px', borderRadius: 12, fontSize: 12,
                                                                 border: sc.border ? `1px solid ${sc.border}` : undefined,
-                                                                fontWeight: 600,
-                                                                whiteSpace: 'nowrap',
+                                                                fontWeight: 600, whiteSpace: 'nowrap',
                                                             }}>
                                                                 {statusLabels[p.health_status]}
                                                             </span>
@@ -471,11 +521,22 @@ export default function PartnersPage({ token }) {
                                                 );
                                             })}
                                             {healthScores.length === 0 && (
-                                                <tr><td colSpan={9} style={{ textAlign: 'center', padding: 20 }}>Chưa có dữ liệu</td></tr>
+                                                <tr><td colSpan={9} style={{ textAlign: 'center', padding: 20 }}>Không có dữ liệu</td></tr>
                                             )}
                                         </tbody>
                                     </table>
                                 </div>
+
+                                {/* Pagination */}
+                                {healthTotalPages > 1 && (
+                                    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8, marginTop: 12 }}>
+                                        <button className="btn btn-outline btn-sm" onClick={() => { const p = healthPage - 1; if (p >= 1) loadPartnerHealth(p, healthStatus); }}
+                                            disabled={healthPage <= 1}>← Trước</button>
+                                        <span style={{ fontSize: '0.8rem' }}>Trang {healthPage} / {healthTotalPages}</span>
+                                        <button className="btn btn-outline btn-sm" onClick={() => { const p = healthPage + 1; if (p <= healthTotalPages) loadPartnerHealth(p, healthStatus); }}
+                                            disabled={healthPage >= healthTotalPages}>Sau →</button>
+                                    </div>
+                                )}
                             </>
                         )}
                     </div>

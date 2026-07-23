@@ -17,7 +17,7 @@ import VietmapMap from '../components/VietmapMap';
 
 const PARTNER_TYPES = ['STORE', 'ASO', 'SUPERMARKET', 'CHAIN', 'AGENT', 'INDIVIDUAL', 'CORPORATE'];
 
-export default function CustomerMapView({ token, onClose }) {
+export default function CustomerMapView({ token, onClose, search }) {
     const [points, setPoints]       = useState([]);
     const [routes, setRoutes]       = useState([]);
     const [provinces, setProvinces] = useState([]);
@@ -32,6 +32,7 @@ export default function CustomerMapView({ token, onClose }) {
         setErr('');
         try {
             const qs = new URLSearchParams();
+            if (search)            qs.set('search', search);
             if (filters.routeCode) qs.set('routeCode', filters.routeCode);
             if (filters.type)      qs.set('type', filters.type);
             if (filters.province)  qs.set('province', filters.province);
@@ -68,7 +69,7 @@ export default function CustomerMapView({ token, onClose }) {
         } finally {
             setLoading(false);
         }
-    }, [token, filters]);
+    }, [token, filters, search]);
 
     useEffect(() => { if (token) load(); }, [load, token]);
 
