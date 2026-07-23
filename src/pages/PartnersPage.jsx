@@ -367,10 +367,10 @@ export default function PartnersPage({ token }) {
                                             {healthScores.filter(p => p.health_status === 'DORMANT').length}
                                         </div>
                                     </div>
-                                    <div style={{ background: '#6B7280', padding: 12, borderRadius: 8, textAlign: 'center' }}>
-                                        <div className="text-sm text-muted">Không hoạt động</div>
-                                        <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#fff' }}>
-                                            {healthScores.filter(p => p.health_status === 'INACTIVE').length}
+                                    <div style={{ background: '#F3F4F6', padding: 12, borderRadius: 8, textAlign: 'center' }}>
+                                        <div className="text-sm text-muted">Không hoạt động / Chưa order</div>
+                                        <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#6B7280' }}>
+                                            {healthScores.filter(p => ['INACTIVE', 'NEVER_ORDERED'].includes(p.health_status)).length}
                                         </div>
                                     </div>
                                 </div>
@@ -397,17 +397,31 @@ export default function PartnersPage({ token }) {
                                                     'ACTIVE': { bg: '#D1FAE5', color: '#065F46' },
                                                     'AT_RISK': { bg: '#FEF3C7', color: '#92400E' },
                                                     'DORMANT': { bg: '#FEE2E2', color: '#991B1B' },
-                                                    'INACTIVE': { bg: '#6B7280', color: '#fff' },
+                                                    'INACTIVE': { bg: '#E5E7EB', color: '#374151', border: '#9CA3AF' },
+                                                    'NEVER_ORDERED': { bg: '#EFF6FF', color: '#1E40AF', border: '#3B82F6' },
                                                 };
                                                 const statusLabels = {
                                                     'ACTIVE': '✅ Hoạt động',
                                                     'AT_RISK': '🟡 Cần theo dõi',
                                                     'DORMANT': '🔴 Ngủ đông',
-                                                    'INACTIVE': '⚫ Không hoạt động',
+                                                    'INACTIVE': '⚪ Không hoạt động',
+                                                    'NEVER_ORDERED': '🔵 Chưa từng đặt',
                                                 };
                                                 const sc = statusColors[p.health_status] || statusColors['INACTIVE'];
+                                                const daysSinceOrder = p.days_since_last_order; // null nếu chưa có đơn
+                                                const daysColor = daysSinceOrder === null
+                                                    ? '#3B82F6'   // Xanh dương (chưa có dữ liệu)
+                                                    : daysSinceOrder > 30 ? '#DC2626'
+                                                    : daysSinceOrder > 15 ? '#F59E0B'
+                                                    : '#10B981';
+                                                const daysText = daysSinceOrder === null
+                                                    ? 'Chưa có đơn'
+                                                    : daysSinceOrder === 0
+                                                        ? 'Hôm nay'
+                                                        : `${daysSinceOrder} ngày`;
                                                 return (
-                                                    <tr key={p.partner_id} style={{ background: p.health_status !== 'ACTIVE' ? sc.bg + '40' : undefined }}>
+                                                    <tr key={p.partner_id}
+                                                        style={{ background: p.health_status === 'NEVER_ORDERED' ? '#EFF6FF60' : undefined }}>
                                                         <td>
                                                             <strong>{p.partner_name}</strong>
                                                             <div style={{ fontSize: '0.75rem', color: '#6B7280' }}>{p.partner_code}</div>
@@ -421,9 +435,9 @@ export default function PartnersPage({ token }) {
                                                                 {p.partner_type}
                                                             </span>
                                                         </td>
-                                                        <td>{p.last_order_date || '—'}</td>
-                                                        <td style={{ color: p.days_since_last_order > 30 ? '#DC2626' : p.days_since_last_order > 15 ? '#F59E0B' : '#10B981', fontWeight: 700 }}>
-                                                            {p.days_since_last_order > 0 ? `${p.days_since_last_order} ngày` : 'Hôm nay'}
+                                                        <td>{p.last_order_date ? new Date(p.last_order_date).toLocaleDateString('vi-VN') : '—'}</td>
+                                                        <td style={{ color: daysColor, fontWeight: 700 }}>
+                                                            {daysText}
                                                         </td>
                                                         <td style={{ fontWeight: 600 }}>{p.orders_last_30d}</td>
                                                         <td style={{ color: '#10B981', fontWeight: 600 }}>{fmt.vnd(p.revenue_last_30d)}</td>
@@ -438,13 +452,19 @@ export default function PartnersPage({ token }) {
                                                             </div>
                                                         </td>
                                                         <td>
-                                                            <span style={{ background: sc.bg, color: sc.color, padding: '2px 8px', borderRadius: 12, fontSize: 12 }}>
+                                                            <span style={{
+                                                                background: sc.bg, color: sc.color,
+                                                                padding: '3px 10px', borderRadius: 12, fontSize: 12,
+                                                                border: sc.border ? `1px solid ${sc.border}` : undefined,
+                                                                fontWeight: 600,
+                                                                whiteSpace: 'nowrap',
+                                                            }}>
                                                                 {statusLabels[p.health_status]}
                                                             </span>
                                                         </td>
                                                         <td>
                                                             {p.alerts?.map((alert, i) => (
-                                                                <div key={i} style={{ fontSize: '0.75rem', color: '#DC2626', whiteSpace: 'nowrap' }}>{alert}</div>
+                                                                <div key={i} style={{ fontSize: '0.75rem', color: '#374151', whiteSpace: 'nowrap' }}>{alert}</div>
                                                             ))}
                                                         </td>
                                                     </tr>
